@@ -1,0 +1,36 @@
+name = "nostrullah"
+main = "src/index.ts"
+compatibility_date = "2025-12-09"
+workers_dev = true
+preview_urls = false
+
+# Bindings
+[ai]
+binding = "AI"
+
+[[kv_namespaces]]
+binding = "BOT_STATE"
+id = "KVNAMESPACEID"
+
+[triggers]
+crons = ["*/4 * * * *"]
+
+[vars]
+NOSTR_ACCOUNTS='''
+[
+    {
+        "privateKey": "YOUR_PRIVATE_KEY",
+        "relays": [
+            "wss://relay.damus.io",
+            "wss://relay.primal.net",
+            "wss://relay.nostr.info",
+            "wss://nostr.wine",
+            "wss://nos.lol"
+        ],
+        "categories": [
+            "technology"
+        ],
+        "frequency": "twice_a_day"
+    }
+]
+'''

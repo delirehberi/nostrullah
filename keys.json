@@ -1,0 +1,66 @@
+[
+    {
+        "privateKey": "nsec1t66nht62nz2yl3fxf0g56w3t47hpaggzs6kszkg5d8rllemsrr8scfantd",
+        "relays": [
+            "wss://relay.damus.io",
+            "wss://relay.nostr.info",
+            "wss://nostr.wine",
+            "wss://nostr.zebedee.cloud",
+            "wss://eden.nostr.land",
+            "wss://nostr.oxtr.dev",
+            "wss://nostr.bitcoiner.social",
+            "wss://nostr.fmt.wiz.biz"
+        ],
+        "categories": [
+            "technology",
+            "programming",
+            "privacy",
+            "security",
+            "cryptography",
+            "blockchain",
+            "cryptocurrency",
+            "decentralization"
+        ],
+        "frequency": "daily"
+    },
+    {
+        "privateKey": "nsec1hgqsjht2t39mqay5sge7v0dv2u2zl99p080zu3rat46tdud2u59sr7h954",
+        "relays": [
+            "wss://relay.damus.io",
+            "wss://nostr-pub.wellorder.net",
+            "wss://nostr.onsats.org",
+            "wss://nostr-relay.wlvs.space",
+            "wss://nostr.bitcoiner.social"
+        ],
+        "categories": [
+            "science",
+            "space",
+            "astronomy",
+            "physics",
+            "biology",
+            "environment",
+            "climate change"
+        ],
+        "frequency": "weekly"
+    },
+    {
+        "privateKey": "nsec1tqz4ravzvxn4szsy42h3way9j4e2at4cyjfa0pft8fqugc34snzq3yx37s",
+        "relays": [
+            "wss://relay.damus.io",
+            "wss://nostr-pub.wellorder.net",
+            "wss://nostr.onsats.org",
+            "wss://nostr-relay.wlvs.space",
+            "wss://nostr.bitcoiner.social"
+        ],
+        "categories": [
+            "art",
+            "design",
+            "photography",
+            "music",
+            "literature",
+            "film",
+            "theater"
+        ],
+        "frequency": "weekly"
+    }
+]
