@@ -48,4 +48,32 @@ export default {
             })());
         }
     },
+
+    async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+        const accounts = parseAccounts(env);
+        const generator = new ContentGenerator(env);
+        const results: any[] = [];
+
+        for (const account of accounts) {
+            try {
+                const pubKey = NostrService.getPublicKeyFromPrivate(account.privateKey);
+                const content = await generator.generatePost(account.categories);
+                results.push({
+                    pubKey: pubKey,
+                    content: content,
+                    categories: account.categories
+                });
+            } catch (error: any) {
+                results.push({
+                    error: error.message
+                });
+            }
+        }
+
+        return new Response(JSON.stringify(results, null, 2), {
+            headers: {
+                'content-type': 'application/json;charset=UTF-8',
+            },
+        });
+    },
 };
