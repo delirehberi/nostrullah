@@ -38,4 +38,24 @@ export class StorageService {
         // Default to 1 hour if unknown
         return diff > 60 * 60 * 1000;
     }
+    private getHistoryKey(publicKey: string): string {
+        return `history:${publicKey}`;
+    }
+
+    async getPostHistory(publicKey: string): Promise<string[]> {
+        const val = await this.kv.get(this.getHistoryKey(publicKey));
+        return val ? JSON.parse(val) : [];
+    }
+
+    async addPostToHistory(publicKey: string, content: string): Promise<void> {
+        const history = await this.getPostHistory(publicKey);
+        history.push(content);
+
+        // Keep only last 20 posts
+        if (history.length > 20) {
+            history.shift(); // Remove oldest
+        }
+
+        await this.kv.put(this.getHistoryKey(publicKey), JSON.stringify(history));
+    }
 }

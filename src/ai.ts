@@ -13,9 +13,9 @@ export class ContentGenerator {
         this.maxLength = parseInt(env.MAX_POST_LENGTH || '280');
     }
 
-    async generatePost(categories: string[]): Promise<string> {
+    async generatePost(categories: string[], previousPosts: string[] = []): Promise<any> {
         const categoryString = categories.join(', ');
-        const prompt = `Generate a short, engaging social media post about ${categoryString} in turkish language. 
+        let prompt = `Generate a short, engaging social media post about ${categoryString} in turkish language. 
     The post should be under ${this.maxLength} characters. 
     Use hashtags. 
     Do not include any introductory text like "Here is a post". 
@@ -25,19 +25,34 @@ export class ContentGenerator {
     Post should be in turkish language.
     `;
 
+        if (previousPosts.length > 0) {
+            prompt += `\n\nHere are the last ${previousPosts.length} posts I created. Do NOT generate content similar to these:\n`;
+            previousPosts.forEach((post, index) => {
+                prompt += `${index + 1}. ${post}\n`;
+            });
+        }
+        let filter_function = function (content: any) {
+            return content.filter((c: any) => {
+                return c.type == 'output_text'
+            });
+        }
         try {
             const response: any = await withRetry(() => this.ai.run(this.model as any, {
-                messages: [
-                    { role: 'system', content: 'You are a helpful social media assistant.' },
-                    { role: 'user', content: prompt }
-                ]
+                instructions: 'You are a helpful social media content generator and your main output language is turkish.',
+                input: prompt
             }));
-
-            let content = response.response || '';
-            if (content.length > this.maxLength) {
-                content = content.substring(0, this.maxLength - 3) + '...';
+            //response.output[].type=='output_text'.content.text
+            //is string 
+            const result = response.output.filter((c: any) => {
+                return c.content.filter((a: any) => {
+                    return a.type == 'output_text'
+                }).length > 0;
+            });
+            if (result.length === 0) {
+                throw new Error('No valid output found');
             }
-            return content.trim();
+            return result[0].content[0].text;
+
         } catch (error) {
             console.error('AI generation failed:', error);
             throw error;

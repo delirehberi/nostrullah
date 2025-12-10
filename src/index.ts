@@ -31,7 +31,8 @@ export default {
 
                     console.log(`Processing account ${pubKey.slice(0, 8)}...`);
 
-                    const content = await generator.generatePost(account.categories);
+                    const history = await storage.getPostHistory(pubKey);
+                    const content = await generator.generatePost(account.categories, history);
                     console.log(`Generated content: ${content}`);
 
                     const published = await NostrService.publishEvent(account, content);
@@ -39,6 +40,7 @@ export default {
                     if (published) {
                         console.log(`Successfully published for ${pubKey.slice(0, 8)}...`);
                         await storage.updateLastRun(pubKey);
+                        await storage.addPostToHistory(pubKey, content);
                     } else {
                         console.error(`Failed to publish for ${pubKey.slice(0, 8)}...`);
                     }
@@ -50,14 +52,22 @@ export default {
     },
 
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+        //disable endpoint if reqquest not have querystring of hellofromemre
+        if (!request.url.includes('1542')) {
+            return new Response('Forbidden', {
+                status: 403,
+            });
+        }
         const accounts = parseAccounts(env);
+        const storage = new StorageService(env);
         const generator = new ContentGenerator(env);
         const results: any[] = [];
 
         for (const account of accounts) {
             try {
                 const pubKey = NostrService.getPublicKeyFromPrivate(account.privateKey);
-                const content = await generator.generatePost(account.categories);
+                const history = await storage.getPostHistory(pubKey);
+                const content = await generator.generatePost(account.categories, history);
                 results.push({
                     pubKey: pubKey,
                     content: content,
