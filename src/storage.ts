@@ -34,6 +34,9 @@ export class StorageService {
         if (frequency === 'hourly') {
             return diff > 60 * 60 * 1000;
         }
+        if(frequency === 'twice_a_day'){
+            return diff > 12 * 60 * 60 * 1000;
+        }
 
         // Default to 1 hour if unknown
         return diff > 60 * 60 * 1000;
