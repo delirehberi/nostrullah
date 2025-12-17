@@ -64,11 +64,41 @@ The bot is configured using environment variables and `wrangler.toml`.
 
 ## Utilities
 
+
 ### Generate New Keys
 To generate a new Nostr private key (hex and nsec format):
 ```bash
 npm run generate-key
 ```
+
+### Helper Scripts
+
+We provide several bash scripts to help manage your bot accounts and data.
+
+#### Add Resource (`add_resource.sh`)
+Add an RSS feed or other data source to a specific account. This data is fetched and provided as context to the AI.
+
+```bash
+./add_resource.sh <private_key> <type> <url> <weight>
+```
+*   `type`: Currently supports `rss`.
+*   `weight`: Importance of this source (integer).
+
+#### Update Prompt (`update_prompt.sh`)
+Interactively edit the AI prompt template for an account using `vim`.
+
+```bash
+./update_prompt.sh <private_key>
+```
+This script fetches the current template, opens it in `vim`, and saves the updated version back to the database.
+
+## Prompt Customization
+
+You can use the following placeholders in your prompt templates to inject dynamic content:
+
+-   `$$RESOURCES$$`: Replaced with content fetched from your configured resources (e.g., RSS feeds).
+-   `$$POST_HISTORY$$`: Replaced with the account's recent post history to maintain style/context.
+-   `$$CATEGORIES$$`: Replaced with the comma-separated list of account categories.
 
 ## Running & Deployment
 
