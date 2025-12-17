@@ -1,23 +1,16 @@
 import { Env } from './types';
 
 export class StorageService {
-    private kv: KVNamespace;
+    private db: D1Database;
 
     constructor(env: Env) {
-        this.kv = env.BOT_STATE;
+        this.db = env.DB;
     }
 
-    private getKey(publicKey: string): string {
-        return `last_run:${publicKey}`;
-    }
-
-    async getLastRun(publicKey: string): Promise<number> {
-        const val = await this.kv.get(this.getKey(publicKey));
-        return val ? parseInt(val) : 0;
-    }
-
-    async updateLastRun(publicKey: string): Promise<void> {
-        await this.kv.put(this.getKey(publicKey), Date.now().toString());
+    async updateLastRun(accountId: number): Promise<void> {
+        await this.db.prepare(
+            'UPDATE accounts SET last_run_at = ? WHERE id = ?'
+        ).bind(Date.now(), accountId).run();
     }
 
     shouldRun(lastRun: number, frequency: string): boolean {
@@ -34,31 +27,24 @@ export class StorageService {
         if (frequency === 'hourly') {
             return diff > 60 * 60 * 1000;
         }
-        if(frequency === 'twice_a_day'){
+        if (frequency === 'twice_a_day') {
             return diff > 12 * 60 * 60 * 1000;
         }
 
         // Default to 1 hour if unknown
         return diff > 60 * 60 * 1000;
     }
-    private getHistoryKey(publicKey: string): string {
-        return `history:${publicKey}`;
+
+    async getPostHistory(accountId: number): Promise<string[]> {
+        const { results } = await this.db.prepare(
+            'SELECT content FROM post_history WHERE account_id = ? ORDER BY created_at DESC LIMIT 20'
+        ).bind(accountId).all();
+        return results.map((r: any) => r.content);
     }
 
-    async getPostHistory(publicKey: string): Promise<string[]> {
-        const val = await this.kv.get(this.getHistoryKey(publicKey));
-        return val ? JSON.parse(val) : [];
-    }
-
-    async addPostToHistory(publicKey: string, content: string): Promise<void> {
-        const history = await this.getPostHistory(publicKey);
-        history.push(content);
-
-        // Keep only last 20 posts
-        if (history.length > 20) {
-            history.shift(); // Remove oldest
-        }
-
-        await this.kv.put(this.getHistoryKey(publicKey), JSON.stringify(history));
+    async addPostToHistory(accountId: number, content: string): Promise<void> {
+        await this.db.prepare(
+            'INSERT INTO post_history (account_id, content) VALUES (?, ?)'
+        ).bind(accountId, content).run();
     }
 }
