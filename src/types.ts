@@ -1,10 +1,18 @@
 import { Ai } from '@cloudflare/workers-types';
 
-export interface Resource {
-    type: 'rss' | 'scraping';
-    url: string;
-    weight?: number; // Default to 1
-}
+export type Resource =
+    | {
+          type: 'rss' | 'scraping';
+          url: string;
+          weight?: number; // Default to 1
+      }
+    | {
+          type: 'quote';
+          categories: string[];
+          weight?: number; // Default to 1
+      };
+
+export type Personality = 'informative' | 'humorous' | 'enthusiastic' | 'sarcastic' | 'philosophical';
 
 export interface NostrAccount {
     id?: number; // Added ID for DB reference
@@ -15,6 +23,7 @@ export interface NostrAccount {
     data_resources?: Resource[]; // JSON array
     prompt_template?: string;
     last_run_at?: number;
+    personality?: Personality;
 }
 
 export interface Env {
