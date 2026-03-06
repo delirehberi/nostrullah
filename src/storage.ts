@@ -1,4 +1,5 @@
 import { Env } from './types';
+import { add, isAfter } from 'date-fns';
 
 export class StorageService {
     private db: D1Database;
@@ -10,29 +11,34 @@ export class StorageService {
     async updateLastRun(accountId: number): Promise<void> {
         await this.db.prepare(
             'UPDATE accounts SET last_run_at = ? WHERE id = ?'
-        ).bind(Date.now(), accountId).run();
+        ).bind(Math.floor(Date.now() / 1000), accountId).run();
     }
 
     shouldRun(lastRun: number, frequency: string): boolean {
-        const now = Date.now();
-        const diff = now - lastRun;
+        const now = new Date();
+        const lastRunDate = new Date(lastRun * 1000); // Convert seconds to milliseconds
+        
+        let nextRunDate: Date;
 
-        // Simple frequency parsing
-        if (frequency === 'every_2_hours') {
-            return diff > 2 * 60 * 60 * 1000;
-        }
-        if (frequency === 'daily') {
-            return diff > 24 * 60 * 60 * 1000;
-        }
-        if (frequency === 'hourly') {
-            return diff > 60 * 60 * 1000;
-        }
-        if (frequency === 'twice_a_day') {
-            return diff > 12 * 60 * 60 * 1000;
+        switch (frequency) {
+            case 'every_2_hours':
+                nextRunDate = add(lastRunDate, { hours: 2 });
+                break;
+            case 'daily':
+                nextRunDate = add(lastRunDate, { days: 1 });
+                break;
+            case 'hourly':
+                nextRunDate = add(lastRunDate, { hours: 1 });
+                break;
+            case 'twice_a_day':
+                nextRunDate = add(lastRunDate, { hours: 12 });
+                break;
+            default:
+                nextRunDate = add(lastRunDate, { hours: 1 });
+                break;
         }
 
-        // Default to 1 hour if unknown
-        return diff > 60 * 60 * 1000;
+        return isAfter(now, nextRunDate);
     }
 
     async getPostHistory(accountId: number): Promise<string[]> {

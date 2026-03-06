@@ -48,11 +48,12 @@ export default {
                         context = await resourceService.fetchResources(account.data_resources);
                     }
 
-                    const content = await generator.generatePost(
+                     const content = await generator.generatePost(
                         account.categories,
                         history,
                         context,
-                        account.prompt_template
+                        account.prompt_template,
+                        account.personality
                     );
 
                     console.log(`Generated content: ${content}`);

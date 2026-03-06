@@ -22,31 +22,30 @@ export class ResourceService {
             return '';
         }
 
-        console.log(`Selected resource: ${selectedResource.url} (type: ${selectedResource.type})`);
+        console.log(`Selected resource type: ${selectedResource.type}`);
 
         // 2. Fetch and Parse
         try {
-            if (selectedResource.type === 'rss') {
+            if (selectedResource.type === 'rss' || selectedResource.type === 'scraping') {
                 return await this.fetchAndParseRSS(selectedResource.url);
             }
-            // Add scraping logic here in future
+            if (selectedResource.type === 'quote') {
+                return await this.fetchQuote(selectedResource.categories);
+            }
         } catch (error) {
-            console.error(`Failed to fetch resource ${selectedResource.url}:`, error);
+            console.error(`Failed to fetch resource:`, error);
         }
 
         return '';
     }
 
     private selectResource(resources: Resource[]): Resource | null {
-        // Filter valid resources
-        const validResources = resources.filter(r => r.url);
-        if (validResources.length === 0) return null;
+        if (resources.length === 0) return null;
 
-        // Calculate total weight
-        const totalWeight = validResources.reduce((sum, r) => sum + (r.weight || 1), 0);
+        const totalWeight = resources.reduce((sum, r) => sum + (r.weight || 1), 0);
         let random = Math.random() * totalWeight;
 
-        for (const resource of validResources) {
+        for (const resource of resources) {
             const weight = resource.weight || 1;
             if (random < weight) {
                 return resource;
@@ -54,8 +53,23 @@ export class ResourceService {
             random -= weight;
         }
 
-        return validResources[0]; // Fallback
+        return resources[0]; // Fallback
     }
+
+    private async fetchQuote(categories: string[]): Promise<string> {
+        const category = categories[Math.floor(Math.random() * categories.length)];
+        const response = await fetch(`https://api.quotable.io/quotes/random?tags=${category}`);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data: any = await response.json();
+        if (data.length > 0) {
+            const quote = data[0];
+            return `"${quote.content}" - ${quote.author}`;
+        }
+        return '';
+    }
+
 
     private async fetchAndParseRSS(url: string): Promise<string> {
         const response = await fetch(url, {
