@@ -64,16 +64,23 @@ export class ContentGenerator {
                 })
             );
 
-            const result = response.output.filter((c: any) => {
-                return c.content.filter((a: any) => {
-                    return a.type == 'output_text';
-                }).length > 0;
-            });
+            if (!response?.output) {
+                throw new Error(`Unexpected AI response format: ${JSON.stringify(response)}`);
+            }
+
+            const result = response.output.filter((c: any) =>
+                Array.isArray(c.content) && c.content.some((a: any) => a.type === 'output_text')
+            );
 
             if (result.length === 0) {
                 throw new Error('No valid output found');
             }
-            return result[0].content[0].text;
+
+            const textContent = result[0].content.find((a: any) => a.type === 'output_text');
+            if (!textContent?.text) {
+                throw new Error('output_text item has no text field');
+            }
+            return textContent.text;
         } catch (error) {
             console.error('AI generation failed:', error);
             throw error;

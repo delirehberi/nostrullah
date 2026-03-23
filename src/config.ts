@@ -14,7 +14,8 @@ export const getAccounts = async (env: Env): Promise<NostrAccount[]> => {
             frequency: row.frequency,
             data_resources: row.data_resources ? JSON.parse(row.data_resources) : [],
             prompt_template: row.prompt_template,
-            last_run_at: row.last_run_at || 0
+            last_run_at: row.last_run_at || 0,
+            personality: row.personality || undefined
         }));
     } catch (e) {
         console.error('Failed to fetch accounts from DB:', e);

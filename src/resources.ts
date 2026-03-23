@@ -63,9 +63,8 @@ export class ResourceService {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data: any = await response.json();
-        if (data.length > 0) {
-            const quote = data[0];
-            return `"${quote.content}" - ${quote.author}`;
+        if (data && data.content) {
+            return `"${data.content}" - ${data.author}`;
         }
         return '';
     }
