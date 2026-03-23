@@ -102,7 +102,8 @@ export default {
                     account.categories,
                     history,
                     context,
-                    account.prompt_template
+                    account.prompt_template,
+                    account.personality
                 );
 
                 results.push({
