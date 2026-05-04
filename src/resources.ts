@@ -99,14 +99,13 @@ export class ResourceService {
         // Extract top 3 items
         const topItems = items.slice(0, 3);
 
-        let output = `Source: ${url}\n\n`;
+        let output = '';
 
         topItems.forEach((item: any) => {
-            const title = item.title;
-            const link = item.link;
-            const desc = item.description || item.summary || '';
-            // Strip HTML from description if simple string
-            const cleanDesc = typeof desc === 'string' ? desc.replace(/<[^>]*>?/gm, "") : '';
+            const title = this.extractTextValue(item.title) || 'Untitled';
+            const link = this.extractItemLink(item);
+            const desc = this.extractTextValue(item.description || item.summary || item['content:encoded'] || '');
+            const cleanDesc = desc.replace(/<[^>]*>?/gm, '');
 
             output += `Title: ${title}\n`;
             if (cleanDesc) output += `Summary: ${cleanDesc.slice(0, 150)}...\n`;
@@ -115,5 +114,96 @@ export class ResourceService {
         });
 
         return output;
+    }
+
+    private extractItemLink(item: any): string | undefined {
+        const candidates = [
+            item.link,
+            item.guid,
+            item.id,
+        ];
+
+        for (const candidate of candidates) {
+            const normalized = this.normalizeLinkCandidate(candidate);
+            if (normalized) {
+                return normalized;
+            }
+        }
+
+        return undefined;
+    }
+
+    private normalizeLinkCandidate(candidate: any): string | undefined {
+        if (!candidate) {
+            return undefined;
+        }
+
+        if (typeof candidate === 'string') {
+            return this.isHttpUrl(candidate) ? candidate : undefined;
+        }
+
+        if (Array.isArray(candidate)) {
+            for (const entry of candidate) {
+                const normalized = this.normalizeLinkCandidate(entry);
+                if (normalized) {
+                    return normalized;
+                }
+            }
+            return undefined;
+        }
+
+        if (typeof candidate === 'object') {
+            const href = typeof candidate['@_href'] === 'string' ? candidate['@_href'] : undefined;
+            if (href && this.isHttpUrl(href)) {
+                return href;
+            }
+
+            const textValue = this.extractTextValue(candidate);
+            if (textValue && this.isHttpUrl(textValue)) {
+                return textValue;
+            }
+        }
+
+        return undefined;
+    }
+
+    private extractTextValue(value: any): string {
+        if (!value) {
+            return '';
+        }
+
+        if (typeof value === 'string') {
+            return value.trim();
+        }
+
+        if (Array.isArray(value)) {
+            for (const entry of value) {
+                const extracted = this.extractTextValue(entry);
+                if (extracted) {
+                    return extracted;
+                }
+            }
+            return '';
+        }
+
+        if (typeof value === 'object') {
+            const textKeys = ['#text', '__cdata', '@_title'];
+            for (const key of textKeys) {
+                if (typeof value[key] === 'string') {
+                    return value[key].trim();
+                }
+            }
+        }
+
+        return '';
+    }
+
+    private isHttpUrl(value: string): boolean {
+        try {
+            const parsed = new URL(value);
+            return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+        } catch {
+            return false;
+        }
     }
 }
