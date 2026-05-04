@@ -19,10 +19,15 @@ export class ContentGenerator {
         previousPosts: string[] = [],
         context: string = '',
         promptTemplate?: string,
-        personality?: Personality
+        personality?: Personality,
+        additionalGuidance?: string
     ): Promise<any> {
-        // 1. Set the instruction prompt based on personality
-        const instructions = personalityTemplates[personality || 'informative'];
+        // Fall back cleanly if the DB contains an unknown personality value.
+        const normalizedPersonality: Personality =
+            personality && Object.prototype.hasOwnProperty.call(personalityTemplates, personality)
+                ? personality
+                : 'informative';
+        const instructions = personalityTemplates[normalizedPersonality];
 
         // 2. Construct the user/input prompt
         let inputPrompt = '';
@@ -53,6 +58,10 @@ export class ContentGenerator {
             previousPosts.forEach((post, index) => {
                 inputPrompt += `${index + 1}. ${post}\n`;
             });
+        }
+
+        if (additionalGuidance) {
+            inputPrompt += `\n\nAdditional requirements:\n${additionalGuidance}`;
         }
 
         // 4. Run the AI model
@@ -87,4 +96,3 @@ export class ContentGenerator {
         }
     }
 }
-
