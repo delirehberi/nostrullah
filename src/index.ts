@@ -6,6 +6,10 @@ import { NostrService } from './nostr';
 import { StorageService } from './storage';
 import { generateValidatedPost } from './post-generation';
 import { ResourceService } from './resources';
+import { ContentSimilarityService } from './content-similarity';
+
+const PROMPT_HISTORY_LIMIT = 20;
+const SIMILARITY_HISTORY_LIMIT = 30;
 
 export default {
     async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
@@ -20,6 +24,7 @@ export default {
         const storage = new StorageService(env);
         const generator = new ContentGenerator(env);
         const resourceService = new ResourceService();
+        const similarityService = new ContentSimilarityService(env);
 
         for (const account of accounts) {
             ctx.waitUntil((async () => {
@@ -40,7 +45,8 @@ export default {
                         return;
                     }
 
-                    const history = await storage.getPostHistory(account.id);
+                    const history = await storage.getPostHistory(account.id, SIMILARITY_HISTORY_LIMIT);
+                    const promptHistory = history.slice(0, PROMPT_HISTORY_LIMIT);
 
                     // Fetch external resources (RSS, etc.)
                     let context = '';
@@ -52,10 +58,12 @@ export default {
                     const generatedPost = await generateValidatedPost({
                         generator,
                         categories: account.categories,
-                        previousPosts: history,
+                        previousPosts: promptHistory,
+                        similarityHistory: history,
                         context,
                         promptTemplate: account.prompt_template,
                         personality: account.personality,
+                        similarityChecker: similarityService,
                     });
                     const content = generatedPost.content;
 
@@ -93,13 +101,15 @@ export default {
         const storage = new StorageService(env);
         const generator = new ContentGenerator(env);
         const resourceService = new ResourceService();
+        const similarityService = new ContentSimilarityService(env);
         const results: any[] = [];
 
         for (const account of accounts) {
             try {
                 if (!account.id) continue;
                 const pubKey = NostrService.getPublicKeyFromPrivate(account.privateKey);
-                const history = await storage.getPostHistory(account.id);
+                const history = await storage.getPostHistory(account.id, SIMILARITY_HISTORY_LIMIT);
+                const promptHistory = history.slice(0, PROMPT_HISTORY_LIMIT);
 
                 let context = '';
                 if (account.data_resources && account.data_resources.length > 0) {
@@ -109,10 +119,12 @@ export default {
                 const generatedPost = await generateValidatedPost({
                     generator,
                     categories: account.categories,
-                    previousPosts: history,
+                    previousPosts: promptHistory,
+                    similarityHistory: history,
                     context,
                     promptTemplate: account.prompt_template,
                     personality: account.personality,
+                    similarityChecker: similarityService,
                 });
                 const content = generatedPost.content;
 

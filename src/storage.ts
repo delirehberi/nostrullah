@@ -3,6 +3,7 @@ import { add, isAfter } from 'date-fns';
 
 export class StorageService {
     private db: D1Database;
+    private static readonly DEFAULT_POST_HISTORY_LIMIT = 20;
 
     constructor(env: Env) {
         this.db = env.DB;
@@ -55,10 +56,13 @@ export class StorageService {
         return lastRun;
     }
 
-    async getPostHistory(accountId: number): Promise<string[]> {
+    async getPostHistory(
+        accountId: number,
+        limit: number = StorageService.DEFAULT_POST_HISTORY_LIMIT
+    ): Promise<string[]> {
         const { results } = await this.db.prepare(
-            'SELECT content FROM post_history WHERE account_id = ? ORDER BY created_at DESC LIMIT 20'
-        ).bind(accountId).all();
+            'SELECT content FROM post_history WHERE account_id = ? ORDER BY created_at DESC LIMIT ?'
+        ).bind(accountId, limit).all();
         return results.map((r: any) => r.content);
     }
 

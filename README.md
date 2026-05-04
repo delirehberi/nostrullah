@@ -8,6 +8,7 @@ A serverless, headless Nostr bot built on Cloudflare Workers. This bot automatic
 - **AI-Powered Content**: Utilizes Cloudflare Workers AI (@cf/meta/llama-3-8b-instruct) to generate engaging posts.
 - **Multi-Account Support**: Manage multiple Nostr accounts with distinct schedules and content categories.
 - **Robust Publishing**: Includes relay failover, retry logic, and automatic event signing (NIP-19 compatible).
+- **Duplicate Protection**: Screens generated posts against recent publishing history with exact-match, heuristic, and LLM-assisted similarity checks before posting.
 - **Rate Limiting**: Enforces posting frequency limits using Cloudflare KV.
 
 ## Prerequisites
@@ -97,7 +98,7 @@ This script fetches the current template, opens it in `vim`, and saves the updat
 You can use the following placeholders in your prompt templates to inject dynamic content:
 
 -   `$$RESOURCES$$`: Replaced with content fetched from your configured resources (e.g., RSS feeds).
--   `$$POST_HISTORY$$`: Replaced with the account's recent post history to maintain style/context.
+-   `$$POST_HISTORY$$`: Replaced with the account's recent post history to maintain style/context and reduce repeated post ideas.
 -   `$$CATEGORIES$$`: Replaced with the comma-separated list of account categories.
 
 ## Running & Deployment
