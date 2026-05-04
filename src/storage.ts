@@ -16,7 +16,8 @@ export class StorageService {
 
     shouldRun(lastRun: number, frequency: string): boolean {
         const now = new Date();
-        const lastRunDate = new Date(lastRun * 1000); // Convert seconds to milliseconds
+        const normalizedLastRun = this.normalizeLastRunTimestamp(lastRun);
+        const lastRunDate = new Date(normalizedLastRun * 1000);
         
         let nextRunDate: Date;
 
@@ -39,6 +40,19 @@ export class StorageService {
         }
 
         return isAfter(now, nextRunDate);
+    }
+
+    private normalizeLastRunTimestamp(lastRun: number): number {
+        if (!Number.isFinite(lastRun) || lastRun <= 0) {
+            return 0;
+        }
+
+        // Older rows stored milliseconds, while current writes use seconds.
+        if (lastRun > 10_000_000_000) {
+            return Math.floor(lastRun / 1000);
+        }
+
+        return lastRun;
     }
 
     async getPostHistory(accountId: number): Promise<string[]> {

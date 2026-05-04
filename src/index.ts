@@ -4,6 +4,7 @@ import { getAccounts } from './config';
 import { ContentGenerator } from './ai';
 import { NostrService } from './nostr';
 import { StorageService } from './storage';
+import { generateValidatedPost } from './post-generation';
 import { ResourceService } from './resources';
 
 export default {
@@ -48,15 +49,22 @@ export default {
                         context = await resourceService.fetchResources(account.data_resources);
                     }
 
-                     const content = await generator.generatePost(
-                        account.categories,
-                        history,
+                    const generatedPost = await generateValidatedPost({
+                        generator,
+                        categories: account.categories,
+                        previousPosts: history,
                         context,
-                        account.prompt_template,
-                        account.personality
-                    );
+                        promptTemplate: account.prompt_template,
+                        personality: account.personality,
+                    });
+                    const content = generatedPost.content;
 
                     console.log(`Generated content: ${content}`);
+                    if (generatedPost.attempts.length > 1) {
+                        console.log(
+                            `Post generation required ${generatedPost.attempts.length} attempts for ${pubKey.slice(0, 8)}...`
+                        );
+                    }
 
                     const published = await NostrService.publishEvent(account, content);
 
@@ -98,17 +106,20 @@ export default {
                     context = await resourceService.fetchResources(account.data_resources);
                 }
 
-                const content = await generator.generatePost(
-                    account.categories,
-                    history,
+                const generatedPost = await generateValidatedPost({
+                    generator,
+                    categories: account.categories,
+                    previousPosts: history,
                     context,
-                    account.prompt_template,
-                    account.personality
-                );
+                    promptTemplate: account.prompt_template,
+                    personality: account.personality,
+                });
+                const content = generatedPost.content;
 
                 results.push({
                     pubKey: pubKey,
                     content: content,
+                    attempts: generatedPost.attempts,
                     categories: account.categories,
                     last_run: account.last_run_at,
                     context_used: !!context,
