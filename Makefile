@@ -14,6 +14,10 @@ deploy:
 	@echo "🚀 Deploying to Cloudflare Workers..."
 	@npx wrangler deploy
 
+migrate:
+	@echo "🗄️ Applying remote D1 migrations..."
+	@npx wrangler d1 migrations apply nostr-bot-db --remote
+
 # --- Add Resources ---
 # Usage: make add-resource-rss-tech url="https://example.com/rss.xml" weight=5
 add-resource-rss-tech:
@@ -50,6 +54,7 @@ update-prompt-art:
 help:
 	@echo "Usage:"
 	@echo "  make deploy                           - Deploy to Cloudflare Workers"
+	@echo "  make migrate                          - Apply pending remote D1 migrations"
 	@echo ""
 	@echo "  --- Add RSS Resource ---"
 	@echo "  make add-resource-rss-tech url=\"...\" weight=\"...\""
@@ -66,4 +71,4 @@ help:
 	@echo "  make update-prompt-science"
 	@echo "  make update-prompt-art"
 
-.PHONY: deploy add-resource-rss-tech add-resource-rss-science add-resource-rss-art add-resource-quote-tech add-resource-quote-science add-resource-quote-art update-prompt-tech update-prompt-science update-prompt-art help
+.PHONY: deploy migrate add-resource-rss-tech add-resource-rss-science add-resource-rss-art add-resource-quote-tech add-resource-quote-science add-resource-quote-art update-prompt-tech update-prompt-science update-prompt-art help

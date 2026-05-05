@@ -9,7 +9,8 @@ A serverless, headless Nostr bot built on Cloudflare Workers. This bot automatic
 - **Multi-Account Support**: Manage multiple Nostr accounts with distinct schedules and content categories.
 - **Robust Publishing**: Includes relay failover, retry logic, and automatic event signing (NIP-19 compatible).
 - **Duplicate Protection**: Screens generated posts against recent publishing history with exact-match, heuristic, and LLM-assisted similarity checks before posting.
-- **Rate Limiting**: Enforces posting frequency limits using Cloudflare KV.
+- **D1-Backed Scheduling**: Stores account config, post history, and scheduling state in Cloudflare D1.
+- **Reply-Driven Controls**: Allowlisted admin pubkeys can update D1-backed account config through Nostr replies and mentions.
 
 ## Prerequisites
 
@@ -32,36 +33,19 @@ A serverless, headless Nostr bot built on Cloudflare Workers. This bot automatic
 
 ## Configuration
 
-The bot is configured using environment variables and `wrangler.toml`.
+The bot uses Cloudflare D1 for account configuration and worker environment variables for runtime settings.
 
-1.  **Cloudflare KV Setup:**
-    Create a KV namespace for the bot to store state (last run times).
-    ```bash
-    npx wrangler kv:namespace create BOT_STATE
-    ```
-    Copy `wrangler.toml.dist` to `wrangler.toml` and update `wrangler.toml` with the `id` from the output:
-    ```toml
-    [[kv_namespaces]]
-    binding = "BOT_STATE"
-    id = "YOUR_KV_NAMESPACE_ID"
-    ```
+1.  **Cloudflare D1 Setup:**
+    Create the D1 database, bind it in `wrangler.toml`, and apply the SQL files in `migrations/`.
 
 2.  **Environment Variables:**
     The bot requires specific environment variables. You can set these in your Cloudflare Worker dashboard or via `wrangler secret put`.
 
-    - `NOSTR_ACCOUNTS`: A JSON string defining the accounts.
-      ```json
-      [
-        {
-          "privateKey": "YOUR_PRIVATE_KEY",
-          "relays": ["wss://relay.damus.io", "wss://nos.lol"],
-          "categories": ["technology", "coding"],
-          "frequency": "every_2_hours"
-        }
-      ]
-      ```
     - `AI_MODEL` (Optional): The AI model to use (default: `@cf/openai/gpt-oss-120b`).
     - `MAX_POST_LENGTH` (Optional): Max character count for posts (default: 280).
+
+3.  **Account Records:**
+    Accounts are loaded from the D1 `accounts` table. JSON-backed fields such as `relays`, `categories`, `data_resources`, and `control_admin_pubkeys` are stored as text in D1.
 
 ## Utilities
 
@@ -101,13 +85,31 @@ You can use the following placeholders in your prompt templates to inject dynami
 -   `$$POST_HISTORY$$`: Replaced with the account's recent post history to maintain style/context and reduce repeated post ideas.
 -   `$$CATEGORIES$$`: Replaced with the comma-separated list of account categories.
 
+## Nostr Control Replies
+
+Accounts can opt into a reply-driven control plane by setting:
+
+- `control_enabled = 1`
+- `control_admin_pubkeys = '["<admin-pubkey>"]'`
+
+During each cron run, the worker polls relays for new admin-authored mentions and replies, validates the requested change, applies supported D1-backed updates immediately, and replies on Nostr with an acknowledgement.
+
+Supported v1 control actions:
+
+- set `prompt_template`
+- set `name`
+- set `categories`
+- set `personality`
+- set `frequency`
+- set `relays`
+- set `is_active`
+- add, remove, or replace `data_resources`
+
 ## Running & Deployment
 
 ### Local Development
 To run the worker locally (note: Cron triggers may need manual invocation or simulation):
 ```bash
-npm run start
-# or
 npx wrangler dev
 ```
 

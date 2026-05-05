@@ -3,6 +3,27 @@ import { Env, Personality } from './types';
 import { withRetry } from './utils';
 import { personalityTemplates } from '../prompts';
 
+export function extractOutputText(response: any): string {
+    if (!response?.output) {
+        throw new Error(`Unexpected AI response format: ${JSON.stringify(response)}`);
+    }
+
+    const result = response.output.filter((c: any) =>
+        Array.isArray(c.content) && c.content.some((a: any) => a.type === 'output_text')
+    );
+
+    if (result.length === 0) {
+        throw new Error('No valid output found');
+    }
+
+    const textContent = result[0].content.find((a: any) => a.type === 'output_text');
+    if (!textContent?.text) {
+        throw new Error('output_text item has no text field');
+    }
+
+    return textContent.text;
+}
+
 export class ContentGenerator {
     private ai: Ai;
     private model: string;
@@ -73,23 +94,7 @@ export class ContentGenerator {
                 })
             );
 
-            if (!response?.output) {
-                throw new Error(`Unexpected AI response format: ${JSON.stringify(response)}`);
-            }
-
-            const result = response.output.filter((c: any) =>
-                Array.isArray(c.content) && c.content.some((a: any) => a.type === 'output_text')
-            );
-
-            if (result.length === 0) {
-                throw new Error('No valid output found');
-            }
-
-            const textContent = result[0].content.find((a: any) => a.type === 'output_text');
-            if (!textContent?.text) {
-                throw new Error('output_text item has no text field');
-            }
-            return textContent.text;
+            return extractOutputText(response);
         } catch (error) {
             console.error('AI generation failed:', error);
             throw error;
