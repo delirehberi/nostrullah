@@ -18,6 +18,21 @@ describe('StorageService.shouldRun', () => {
 
         expect(storage.shouldRun(lastRunSeconds, 'every_2_hours')).toBe(true);
     });
+
+    it('treats the exact twice-a-day boundary as due', () => {
+        vi.useFakeTimers();
+        try {
+            const now = new Date('2026-05-06T12:00:00.000Z');
+            vi.setSystemTime(now);
+
+            const storage = new StorageService({ DB: {} as D1Database } as any);
+            const lastRunSeconds = Math.floor(new Date('2026-05-06T00:00:00.000Z').getTime() / 1000);
+
+            expect(storage.shouldRun(lastRunSeconds, 'twice_a_day')).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
 
 describe('ContentGenerator.generatePost', () => {

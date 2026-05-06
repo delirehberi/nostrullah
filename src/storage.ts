@@ -1,5 +1,5 @@
 import { Env } from './types';
-import { add, isAfter } from 'date-fns';
+import { add } from 'date-fns';
 import { AccountConfigPatch } from './control-actions';
 
 export interface ProcessedControlEventRecord {
@@ -34,10 +34,13 @@ export class StorageService {
     }
 
     shouldRun(lastRun: number, frequency: string): boolean {
-        const now = new Date();
+        return Date.now() >= this.getNextRunTimestamp(lastRun, frequency);
+    }
+
+    getNextRunTimestamp(lastRun: number, frequency: string): number {
         const normalizedLastRun = this.normalizeLastRunTimestamp(lastRun);
         const lastRunDate = new Date(normalizedLastRun * 1000);
-        
+
         let nextRunDate: Date;
 
         switch (frequency) {
@@ -58,7 +61,7 @@ export class StorageService {
                 break;
         }
 
-        return isAfter(now, nextRunDate);
+        return nextRunDate.getTime();
     }
 
     private normalizeLastRunTimestamp(lastRun: number): number {

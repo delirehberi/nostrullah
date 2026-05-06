@@ -127,7 +127,11 @@ async function processScheduledAccount(options: {
         const lastRun = account.last_run_at || 0;
 
         if (!storage.shouldRun(lastRun, account.frequency)) {
-            console.log(`Skipping account ${pubKey.slice(0, 8)}... - not time yet`);
+            const nextRunAt = new Date(storage.getNextRunTimestamp(lastRun, account.frequency)).toISOString();
+            console.log(
+                `Skipping account ${pubKey.slice(0, 8)}... - not time yet ` +
+                `(frequency=${account.frequency}, lastRun=${lastRun}, nextRunAt=${nextRunAt})`
+            );
             return;
         }
 
