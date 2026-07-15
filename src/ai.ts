@@ -4,6 +4,11 @@ import { withRetry } from './utils';
 import { personalityTemplates } from '../prompts';
 
 export function extractOutputText(response: any): string {
+    // Standard Cloudflare AI text generation response
+    if (response && typeof response.response === 'string') {
+        return response.response;
+    }
+
     if (!response?.output) {
         throw new Error(`Unexpected AI response format: ${JSON.stringify(response)}`);
     }
@@ -31,7 +36,7 @@ export class ContentGenerator {
 
     constructor(env: Env) {
         this.ai = env.AI;
-        this.model = env.AI_MODEL || '@cf/openai/gpt-oss-120b';
+        this.model = env.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct-fp8';
         this.maxLength = parseInt(env.MAX_POST_LENGTH || '280');
     }
 
@@ -89,8 +94,10 @@ export class ContentGenerator {
         try {
             const response: any = await withRetry(() =>
                 this.ai.run(this.model as any, {
-                    instructions: instructions,
-                    input: inputPrompt,
+                    messages: [
+                        { role: 'system', content: instructions },
+                        { role: 'user', content: inputPrompt }
+                    ]
                 })
             );
 

@@ -49,6 +49,7 @@ vi.mock('../src/nostr', async () => {
             getPublicKeyFromPrivate: actual.NostrService.getPublicKeyFromPrivate,
             queryEvents: actual.NostrService.queryEvents,
             publishEvent,
+            discoverRelays: vi.fn().mockResolvedValue([]),
         },
     };
 });

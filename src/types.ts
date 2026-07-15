@@ -101,6 +101,7 @@ export interface Env {
     DB: D1Database;
     AI_MODEL: string;
     MAX_POST_LENGTH: string;
+    FAILED_POSTS?: Queue;
 }
 
 export interface BotState {

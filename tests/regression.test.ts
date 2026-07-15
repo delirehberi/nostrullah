@@ -38,16 +38,7 @@ describe('StorageService.shouldRun', () => {
 describe('ContentGenerator.generatePost', () => {
     it('falls back to informative instructions for unknown personalities', async () => {
         const run = vi.fn().mockResolvedValue({
-            output: [
-                {
-                    content: [
-                        {
-                            type: 'output_text',
-                            text: 'test post',
-                        },
-                    ],
-                },
-            ],
+            response: 'test post',
         });
 
         const generator = new ContentGenerator({
@@ -69,7 +60,10 @@ describe('ContentGenerator.generatePost', () => {
         expect(run).toHaveBeenCalledWith(
             '@cf/openai/gpt-oss-120b',
             expect.objectContaining({
-                instructions: expect.stringContaining('informative assistant'),
+                messages: [
+                    { role: 'system', content: expect.stringContaining('informative assistant') },
+                    { role: 'user', content: expect.any(String) }
+                ],
             })
         );
     });

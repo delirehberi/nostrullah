@@ -101,16 +101,17 @@ This is a Cloudflare Workers project. There is no dedicated build script in `pac
 
 ### Lint
 
-There is currently no linting setup in this repository.
+ESLint and Prettier are configured for this project.
+
+- Check linting: `npm run lint`
+- Format code: `npm run format`
 
 ### Test
 
-`vitest` is installed, but `package.json` still contains a placeholder `test` script that exits with an error.
+`vitest` is installed and there is a comprehensive test suite in the `tests/` directory.
 
-- Run all tests directly: `npx vitest`
+- Run all tests directly: `npm run test`
 - Run a single test file: `npx vitest <path_to_test_file>`
-
-If you add tests, prefer also adding or updating the `test` script in `package.json`.
 
 ## Data Model
 
@@ -249,8 +250,6 @@ Sanity-check docs and scripts against the actual code before reusing old wording
 - `wrangler.toml` currently contains account-like data in `[vars].NOSTR_ACCOUNTS`, but the active account-loading path does not use it.
 
 - The preview endpoint in `src/index.ts` is intentionally gated by checking whether the request URL contains `1542`.
-
-- There is no meaningful automated test suite yet, even though `vitest` is installed.
 
 ## Safety Notes
 

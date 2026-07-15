@@ -92,18 +92,24 @@ Accounts can opt into a reply-driven control plane by setting:
 - `control_enabled = 1`
 - `control_admin_pubkeys = '["<admin-pubkey>"]'`
 
-During each cron run, the worker polls relays for new admin-authored mentions and replies, validates the requested change, applies supported D1-backed updates immediately, and replies on Nostr with an acknowledgement.
+The bot **does not use traditional strict slash commands**. Instead, it uses an AI interpreter to read natural language replies or mentions from authorized administrators and convert them into configuration updates.
 
-Supported v1 control actions:
+During each cron run, the worker polls relays for new admin-authored mentions and replies. The bot passes the message to its AI model to map your intent to one of the following supported configuration actions:
 
-- set `prompt_template`
-- set `name`
-- set `categories`
-- set `personality`
-- set `frequency`
-- set `relays`
-- set `is_active`
-- add, remove, or replace `data_resources`
+1. **Prompt Template**: Change the instructions for post generation (`set_prompt`).
+2. **Account Details**: Update its display name (`set_name`).
+3. **Categories**: Change which topics to post about (`set_categories`).
+4. **Personality**: Change its tone. Supported values are: `informative`, `humorous`, `enthusiastic`, `sarcastic`, and `philosophical` (`set_personality`).
+5. **Posting Frequency**: Change how often to post. Supported values are: `hourly`, `every_2_hours`, `twice_a_day`, and `daily` (`set_frequency`).
+6. **Relays**: Add or change the Nostr relays it publishes to (`set_relays`).
+7. **Active State**: Pause or resume posting (`set_active`).
+8. **Resources**: Add, remove, or replace the external content it uses for posts (`add_resource`, `remove_resource`, `replace_resources`). Supports `rss` feeds, `scraping` URLs, and `quote` categories.
+
+**How to use it:**
+As long as your Nostr public key is in the account's `control_admin_pubkeys` allowlist, you can simply reply to one of the bot's posts or mention the bot and say something natural like:
+> *"Change your posting frequency to twice a day and add https://example.com/rss as a new RSS resource."*
+
+The bot will interpret the instruction, apply the changes to the database, and reply to your note confirming the applied actions.
 
 ## Running & Deployment
 

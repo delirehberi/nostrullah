@@ -1,6 +1,7 @@
 import { Env } from './types';
 import { add } from 'date-fns';
 import { AccountConfigPatch } from './control-actions';
+import cronParser from 'cron-parser';
 
 export interface ProcessedControlEventRecord {
     eventId: string;
@@ -40,6 +41,16 @@ export class StorageService {
     getNextRunTimestamp(lastRun: number, frequency: string): number {
         const normalizedLastRun = this.normalizeLastRunTimestamp(lastRun);
         const lastRunDate = new Date(normalizedLastRun * 1000);
+
+        try {
+            // Check if it's a valid cron expression
+            const interval = cronParser.parseExpression(frequency, {
+                currentDate: lastRunDate,
+            });
+            return interval.next().toDate().getTime();
+        } catch (e) {
+            // Not a valid cron expression, fallback to predefined intervals
+        }
 
         let nextRunDate: Date;
 

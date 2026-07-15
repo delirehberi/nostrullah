@@ -1,4 +1,4 @@
-import { ScheduledEvent, ExecutionContext } from '@cloudflare/workers-types';
+import { ScheduledEvent, ExecutionContext, MessageBatch, Queue } from '@cloudflare/workers-types';
 import { Env } from './types';
 import { getAccounts } from './config';
 import { ContentGenerator } from './ai';
@@ -38,11 +38,34 @@ export async function runScheduled(event: ScheduledEvent, env: Env, ctx: Executi
             generator,
             resourceService,
             similarityService,
+            env,
         }));
     }
 }
 
 export default {
+    async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext): Promise<void> {
+        for (const message of batch.messages) {
+            const { account, content, targetRelays } = message.body;
+            try {
+                const publishResult = await NostrService.publishEvent({ ...account, relays: targetRelays }, content);
+                if (publishResult.published) {
+                    console.log(`Successfully published retried post for ${account.name || 'Unknown'}`);
+                    const storage = new StorageService(env);
+                    await storage.updateLastRun(account.id);
+                    await storage.addPostToHistory(account.id, content, publishResult.eventId);
+                    message.ack();
+                } else {
+                    console.error(`Retry failed for ${account.name || 'Unknown'}`);
+                    message.retry();
+                }
+            } catch (e) {
+                console.error('Queue processing error:', e);
+                message.retry();
+            }
+        }
+    },
+
     async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
         await runScheduled(event, env, ctx);
     },
@@ -119,8 +142,9 @@ async function processScheduledAccount(options: {
     generator: ContentGenerator;
     resourceService: ResourceService;
     similarityService: ContentSimilarityService;
+    env: Env;
 }): Promise<void> {
-    const { account, storage, generator, resourceService, similarityService } = options;
+    const { account, storage, generator, resourceService, similarityService, env } = options;
 
     try {
         const pubKey = NostrService.getPublicKeyFromPrivate(account.privateKey);
@@ -170,14 +194,31 @@ async function processScheduledAccount(options: {
             );
         }
 
-        const publishResult = await NostrService.publishEvent(account, content);
+        let targetRelays = account.relays;
+        const discoveredRelays = await NostrService.discoverRelays(pubKey, [
+            ...targetRelays,
+            'wss://relay.damus.io',
+            'wss://nos.lol',
+            'wss://relay.primal.net'
+        ]);
+
+        if (discoveredRelays.length > 0) {
+            const uniqueRelays = new Set([...targetRelays, ...discoveredRelays]);
+            targetRelays = Array.from(uniqueRelays);
+            console.log(`Discovered ${discoveredRelays.length} NIP-65 relays for ${pubKey.slice(0, 8)}... Publishing to ${targetRelays.length} total relays.`);
+        }
+
+        const publishResult = await NostrService.publishEvent({ ...account, relays: targetRelays }, content);
 
         if (publishResult.published) {
             console.log(`Successfully published for ${pubKey.slice(0, 8)}...`);
             await storage.updateLastRun(account.id);
             await storage.addPostToHistory(account.id, content, publishResult.eventId);
         } else {
-            console.error(`Failed to publish for ${pubKey.slice(0, 8)}...`);
+            console.error(`Failed to publish for ${pubKey.slice(0, 8)}... Enqueuing for retry.`);
+            if (env.FAILED_POSTS) {
+                await env.FAILED_POSTS.send({ account, content, targetRelays });
+            }
         }
     } catch (error) {
         console.error('Error processing account:', error);

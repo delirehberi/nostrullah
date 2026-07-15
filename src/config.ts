@@ -1,8 +1,29 @@
+import { z } from 'zod';
 import { Env, NostrAccount } from './types';
+import { resourceSchema } from './control-actions';
 
 interface GetAccountsOptions {
     includeInactive?: boolean;
 }
+
+const stringArraySchema = z.array(z.string()).default([]);
+const resourcesArraySchema = z.array(resourceSchema).default([]);
+
+const safeParseJson = <T>(jsonString: string | null | undefined, schema: z.ZodType<T>, defaultValue: T): T => {
+    if (!jsonString) return defaultValue;
+    try {
+        const parsed = JSON.parse(jsonString);
+        const result = schema.safeParse(parsed);
+        if (result.success) {
+            return result.data;
+        }
+        console.warn(`Zod parsing failed for DB field: ${result.error.message}`);
+        return defaultValue;
+    } catch (e) {
+        console.warn(`JSON parsing failed for DB field: ${e}`);
+        return defaultValue;
+    }
+};
 
 export const getAccounts = async (
     env: Env,
@@ -20,18 +41,16 @@ export const getAccounts = async (
             id: row.id,
             name: row.name || undefined,
             privateKey: row.private_key,
-            relays: JSON.parse(row.relays),
-            categories: JSON.parse(row.categories),
+            relays: safeParseJson(row.relays, stringArraySchema, []),
+            categories: safeParseJson(row.categories, stringArraySchema, []),
             frequency: row.frequency,
-            data_resources: row.data_resources ? JSON.parse(row.data_resources) : [],
+            data_resources: safeParseJson(row.data_resources, resourcesArraySchema, []),
             prompt_template: row.prompt_template,
             last_run_at: row.last_run_at || 0,
             personality: row.personality || undefined,
             is_active: Boolean(row.is_active),
             control_enabled: Boolean(row.control_enabled),
-            control_admin_pubkeys: row.control_admin_pubkeys
-                ? JSON.parse(row.control_admin_pubkeys)
-                : [],
+            control_admin_pubkeys: safeParseJson(row.control_admin_pubkeys, stringArraySchema, []),
             control_last_checked_at: row.control_last_checked_at || 0,
         }));
     } catch (e) {

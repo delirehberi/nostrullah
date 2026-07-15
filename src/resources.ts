@@ -26,8 +26,11 @@ export class ResourceService {
 
         // 2. Fetch and Parse
         try {
-            if (selectedResource.type === 'rss' || selectedResource.type === 'scraping') {
+            if (selectedResource.type === 'rss') {
                 return await this.fetchAndParseRSS(selectedResource.url);
+            }
+            if (selectedResource.type === 'scraping') {
+                return await this.fetchAndParseScraping(selectedResource.url);
             }
             if (selectedResource.type === 'quote') {
                 return await this.fetchQuote(selectedResource.categories);
@@ -68,6 +71,42 @@ export class ResourceService {
         }
         return '';
     }
+
+    private async fetchAndParseScraping(url: string): Promise<string> {
+        const response = await fetch(url, {
+            headers: {
+                'User-Agent': 'NostrBot/1.0 (Scraper)',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        let accumulatedText = '';
+        
+        class TextHandler {
+            text(textInfo: any) {
+                accumulatedText += textInfo.text;
+            }
+        }
+
+        class SpacingHandler {
+            element(element: any) {
+                accumulatedText += ' ';
+            }
+        }
+
+        const rewriter = new HTMLRewriter()
+            .on('p, h1, h2, h3, h4, h5, h6, li, article, section', new TextHandler())
+            .on('p, h1, h2, h3, h4, h5, h6, li, article, section, div, br', new SpacingHandler());
+
+        await rewriter.transform(response).text();
+
+        return accumulatedText.replace(/\s+/g, ' ').trim().slice(0, 5000); // Truncate to avoid massive context
+    }
+
 
 
     private async fetchAndParseRSS(url: string): Promise<string> {

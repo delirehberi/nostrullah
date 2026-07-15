@@ -65,7 +65,7 @@ export class ContentSimilarityService implements PostSimilarityChecker {
 
     constructor(env: Env) {
         this.ai = env.AI;
-        this.model = env.AI_MODEL || '@cf/openai/gpt-oss-120b';
+        this.model = env.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct';
     }
 
     async checkSimilarity(content: string, previousPosts: string[]): Promise<SimilarityCheckResult> {

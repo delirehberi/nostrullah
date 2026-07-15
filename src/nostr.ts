@@ -98,6 +98,29 @@ export class NostrService {
             pool.close(normalizedRelays);
         }
     }
+
+    static async discoverRelays(pubkey: string, bootstrapRelays: string[]): Promise<string[]> {
+        try {
+            const filter: NostrQueryFilter = {
+                kinds: [10002],
+                authors: [pubkey],
+                limit: 1,
+            };
+            const events = await this.queryEvents(bootstrapRelays, filter);
+            if (events.length > 0) {
+                const relayListEvent = events[0];
+                const writeRelays = relayListEvent.tags
+                    .filter((tag) => tag[0] === 'r' && (!tag[2] || tag[2] === 'write'))
+                    .map((tag) => tag[1]);
+                if (writeRelays.length > 0) {
+                    return writeRelays;
+                }
+            }
+        } catch (e) {
+            console.error(`Failed to discover relays for ${pubkey}:`, e);
+        }
+        return [];
+    }
 }
 
 function buildEventTags(options: PublishEventOptions): string[][] {
