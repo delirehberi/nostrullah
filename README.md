@@ -21,6 +21,7 @@ A serverless, headless Nostr bot built on Cloudflare Workers. This bot automatic
 ## Installation
 
 1.  **Clone the repository:**
+
     ```bash
     git clone <repository-url>
     cd nostr.bot
@@ -49,9 +50,10 @@ The bot uses Cloudflare D1 for account configuration and worker environment vari
 
 ## Utilities
 
-
 ### Generate New Keys
+
 To generate a new Nostr private key (hex and nsec format):
+
 ```bash
 npm run generate-key
 ```
@@ -61,29 +63,33 @@ npm run generate-key
 We provide several bash scripts to help manage your bot accounts and data.
 
 #### Add Resource (`add_resource.sh`)
+
 Add an RSS feed or other data source to a specific account. This data is fetched and provided as context to the AI.
 
 ```bash
 ./add_resource.sh <private_key> <type> <url> <weight>
 ```
-*   `type`: Currently supports `rss`.
-*   `weight`: Importance of this source (integer).
+
+- `type`: Currently supports `rss`.
+- `weight`: Importance of this source (integer).
 
 #### Update Prompt (`update_prompt.sh`)
+
 Interactively edit the AI prompt template for an account using `vim`.
 
 ```bash
 ./update_prompt.sh <private_key>
 ```
+
 This script fetches the current template, opens it in `vim`, and saves the updated version back to the database.
 
 ## Prompt Customization
 
 You can use the following placeholders in your prompt templates to inject dynamic content:
 
--   `$$RESOURCES$$`: Replaced with content fetched from your configured resources (e.g., RSS feeds).
--   `$$POST_HISTORY$$`: Replaced with the account's recent post history to maintain style/context and reduce repeated post ideas.
--   `$$CATEGORIES$$`: Replaced with the comma-separated list of account categories.
+- `$$RESOURCES$$`: Replaced with content fetched from your configured resources (e.g., RSS feeds).
+- `$$POST_HISTORY$$`: Replaced with the account's recent post history to maintain style/context and reduce repeated post ideas.
+- `$$CATEGORIES$$`: Replaced with the comma-separated list of account categories.
 
 ## Nostr Control Replies
 
@@ -107,20 +113,25 @@ During each cron run, the worker polls relays for new admin-authored mentions an
 
 **How to use it:**
 As long as your Nostr public key is in the account's `control_admin_pubkeys` allowlist, you can simply reply to one of the bot's posts or mention the bot and say something natural like:
-> *"Change your posting frequency to twice a day and add https://example.com/rss as a new RSS resource."*
+
+> _"Change your posting frequency to twice a day and add https://example.com/rss as a new RSS resource."_
 
 The bot will interpret the instruction, apply the changes to the database, and reply to your note confirming the applied actions.
 
 ## Running & Deployment
 
 ### Local Development
+
 To run the worker locally (note: Cron triggers may need manual invocation or simulation):
+
 ```bash
 npx wrangler dev
 ```
 
 ### Deployment
+
 To deploy the worker to Cloudflare:
+
 ```bash
 npx wrangler deploy
 ```

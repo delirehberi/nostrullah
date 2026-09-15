@@ -1,34 +1,34 @@
 {
-  "name": "nostr.bot",
-  "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "vitest run",
-    "generate-key": "tsx scripts/generate-key.ts",
-    "lint": "eslint .",
-    "format": "prettier --write ."
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "dependencies": {
-    "cron-parser": "^5.6.1",
-    "date-fns": "^4.1.0",
-    "fast-xml-parser": "^5.3.3",
-    "nostr-tools": "^2.19.2",
-    "zod": "^4.1.13"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20251205.0",
-    "@eslint/js": "^10.0.1",
-    "eslint": "^10.6.0",
-    "globals": "^17.7.0",
-    "prettier": "^3.9.4",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.62.1",
-    "vitest": "^4.0.15",
-    "wrangler": "^4.53.0"
-  }
+    "name": "nostr.bot",
+    "version": "1.0.0",
+    "main": "index.js",
+    "scripts": {
+        "test": "vitest run",
+        "generate-key": "tsx scripts/generate-key.ts",
+        "lint": "eslint .",
+        "format": "prettier --write ."
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "description": "",
+    "dependencies": {
+        "cron-parser": "^5.6.1",
+        "date-fns": "^4.1.0",
+        "fast-xml-parser": "^5.3.3",
+        "nostr-tools": "^2.19.2",
+        "zod": "^4.1.13"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "^4.20251205.0",
+        "@eslint/js": "^10.0.1",
+        "eslint": "^10.6.0",
+        "globals": "^17.7.0",
+        "prettier": "^3.9.4",
+        "tsx": "^4.21.0",
+        "typescript": "^5.9.3",
+        "typescript-eslint": "^8.62.1",
+        "vitest": "^4.0.15",
+        "wrangler": "^4.53.0"
+    }
 }

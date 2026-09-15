@@ -1,4 +1,12 @@
-import { Event, EventTemplate, finalizeEvent, getPublicKey, nip19, Relay, SimplePool } from 'nostr-tools';
+import {
+    Event,
+    EventTemplate,
+    finalizeEvent,
+    getPublicKey,
+    nip19,
+    Relay,
+    SimplePool,
+} from 'nostr-tools';
 import { hexToBytes } from '@noble/hashes/utils';
 import { NostrAccount } from './types';
 

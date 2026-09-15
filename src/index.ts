@@ -12,7 +12,11 @@ import { ControlProcessor } from './control';
 const PROMPT_HISTORY_LIMIT = 20;
 const SIMILARITY_HISTORY_LIMIT = 30;
 
-export async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+export async function runScheduled(
+    event: ScheduledEvent,
+    env: Env,
+    ctx: ExecutionContext
+): Promise<void> {
     console.log('Worker triggered by cron');
 
     const allAccounts = await getAccounts(env, { includeInactive: true });
@@ -21,25 +25,30 @@ export async function runScheduled(event: ScheduledEvent, env: Env, ctx: Executi
 
     await controlProcessor.processAccounts(allAccounts);
 
-    const accounts = await getAccounts(env);
+    // BUG-13: Derive active accounts from the already-fetched list rather than
+    // issuing a second DB query.
+    const accounts = allAccounts.filter((a) => a.is_active);
     if (accounts.length === 0) {
         console.log('No active accounts configured');
         return;
     }
 
     const generator = new ContentGenerator(env);
-    const resourceService = new ResourceService();
     const similarityService = new ContentSimilarityService(env);
 
+    // BUG-02: ResourceService holds a stateful XMLParser instance. Instantiate
+    // it per-account inside processScheduledAccount so concurrent accounts cannot
+    // corrupt each other's parsing state.
     for (const account of accounts) {
-        ctx.waitUntil(processScheduledAccount({
-            account,
-            storage,
-            generator,
-            resourceService,
-            similarityService,
-            env,
-        }));
+        ctx.waitUntil(
+            processScheduledAccount({
+                account,
+                storage,
+                generator,
+                similarityService,
+                env,
+            })
+        );
     }
 }
 
@@ -48,9 +57,14 @@ export default {
         for (const message of batch.messages) {
             const { account, content, targetRelays } = message.body;
             try {
-                const publishResult = await NostrService.publishEvent({ ...account, relays: targetRelays }, content);
+                const publishResult = await NostrService.publishEvent(
+                    { ...account, relays: targetRelays },
+                    content
+                );
                 if (publishResult.published) {
-                    console.log(`Successfully published retried post for ${account.name || 'Unknown'}`);
+                    console.log(
+                        `Successfully published retried post for ${account.name || 'Unknown'}`
+                    );
                     const storage = new StorageService(env);
                     await storage.updateLastRun(account.id);
                     await storage.addPostToHistory(account.id, content, publishResult.eventId);
@@ -118,12 +132,11 @@ export default {
                     account_details: {
                         prompt: account.prompt_template,
                         resources: account.data_resources,
-
-                    }
+                    },
                 });
             } catch (error: any) {
                 results.push({
-                    error: error.message
+                    error: error.message,
                 });
             }
         }
@@ -140,21 +153,26 @@ async function processScheduledAccount(options: {
     account: Awaited<ReturnType<typeof getAccounts>>[number];
     storage: StorageService;
     generator: ContentGenerator;
-    resourceService: ResourceService;
     similarityService: ContentSimilarityService;
     env: Env;
 }): Promise<void> {
-    const { account, storage, generator, resourceService, similarityService, env } = options;
+    const { account, storage, generator, similarityService, env } = options;
+
+    // BUG-02: Instantiate per-account to avoid shared XMLParser state across
+    // concurrent waitUntil tasks.
+    const resourceService = new ResourceService();
 
     try {
         const pubKey = NostrService.getPublicKeyFromPrivate(account.privateKey);
         const lastRun = account.last_run_at || 0;
 
         if (!storage.shouldRun(lastRun, account.frequency)) {
-            const nextRunAt = new Date(storage.getNextRunTimestamp(lastRun, account.frequency)).toISOString();
+            const nextRunAt = new Date(
+                storage.getNextRunTimestamp(lastRun, account.frequency)
+            ).toISOString();
             console.log(
                 `Skipping account ${pubKey.slice(0, 8)}... - not time yet ` +
-                `(frequency=${account.frequency}, lastRun=${lastRun}, nextRunAt=${nextRunAt})`
+                    `(frequency=${account.frequency}, lastRun=${lastRun}, nextRunAt=${nextRunAt})`
             );
             return;
         }
@@ -199,16 +217,21 @@ async function processScheduledAccount(options: {
             ...targetRelays,
             'wss://relay.damus.io',
             'wss://nos.lol',
-            'wss://relay.primal.net'
+            'wss://relay.primal.net',
         ]);
 
         if (discoveredRelays.length > 0) {
             const uniqueRelays = new Set([...targetRelays, ...discoveredRelays]);
             targetRelays = Array.from(uniqueRelays);
-            console.log(`Discovered ${discoveredRelays.length} NIP-65 relays for ${pubKey.slice(0, 8)}... Publishing to ${targetRelays.length} total relays.`);
+            console.log(
+                `Discovered ${discoveredRelays.length} NIP-65 relays for ${pubKey.slice(0, 8)}... Publishing to ${targetRelays.length} total relays.`
+            );
         }
 
-        const publishResult = await NostrService.publishEvent({ ...account, relays: targetRelays }, content);
+        const publishResult = await NostrService.publishEvent(
+            { ...account, relays: targetRelays },
+            content
+        );
 
         if (publishResult.published) {
             console.log(`Successfully published for ${pubKey.slice(0, 8)}...`);

@@ -9,6 +9,19 @@ ART_KEY := $(shell cat keys.json | jq -r '.[2].privateKey')
 # --- Default ---
 .DEFAULT_GOAL := help
 
+# --- Development & Testing ---
+dev:
+	@npx wrangler dev
+
+test:
+	@npm run test
+
+lint:
+	@npm run lint
+
+format:
+	@npm run format
+
 # --- Deployment ---
 deploy:
 	@echo "🚀 Deploying to Cloudflare Workers..."
@@ -17,6 +30,7 @@ deploy:
 migrate:
 	@echo "🗄️ Applying remote D1 migrations..."
 	@npx wrangler d1 migrations apply nostr-bot-db --remote
+
 
 # --- Add Resources ---
 # Usage: make add-resource-rss-tech url="https://example.com/rss.xml" weight=5
@@ -71,4 +85,5 @@ help:
 	@echo "  make update-prompt-science"
 	@echo "  make update-prompt-art"
 
-.PHONY: deploy migrate add-resource-rss-tech add-resource-rss-science add-resource-rss-art add-resource-quote-tech add-resource-quote-science add-resource-quote-art update-prompt-tech update-prompt-science update-prompt-art help
+.PHONY: dev test lint format deploy migrate add-resource-rss-tech add-resource-rss-science add-resource-rss-art add-resource-quote-tech add-resource-quote-science add-resource-quote-art update-prompt-tech update-prompt-science update-prompt-art help
+

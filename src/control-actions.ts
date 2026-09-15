@@ -46,94 +46,200 @@ const relayUrlSchema = z.url().refine((value) => {
 }, 'Expected a ws or wss relay URL.');
 const weightSchema = z.number().positive().optional();
 
-const rssResourceSchema = z.object({
-    type: z.enum(['rss', 'scraping']),
-    url: httpUrlSchema,
-    weight: weightSchema,
-}).strict();
+const rssResourceSchema = z
+    .object({
+        type: z.enum(['rss', 'scraping']),
+        url: httpUrlSchema,
+        weight: weightSchema,
+    })
+    .strict();
 
-const quoteResourceSchema = z.object({
-    type: z.literal('quote'),
-    categories: z.array(nonEmptyStringSchema).min(1),
-    weight: weightSchema,
-}).strict();
+const quoteResourceSchema = z
+    .object({
+        type: z.literal('quote'),
+        categories: z.array(nonEmptyStringSchema).min(1),
+        weight: weightSchema,
+    })
+    .strict();
 
-export const resourceSchema = z.union([
-    rssResourceSchema,
-    quoteResourceSchema,
-]);
+export const resourceSchema = z.union([rssResourceSchema, quoteResourceSchema]);
 
-const removeResourceMatchSchema = z.object({
-    type: z.enum(['rss', 'scraping', 'quote']),
-    url: httpUrlSchema.optional(),
-    categories: z.array(nonEmptyStringSchema).min(1).optional(),
-}).strict().superRefine((value, ctx) => {
-    if ((value.type === 'rss' || value.type === 'scraping') && !value.url) {
-        ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'RSS and scraping resource removals require a URL.',
-        });
-    }
+const removeResourceMatchSchema = z
+    .object({
+        type: z.enum(['rss', 'scraping', 'quote']),
+        url: httpUrlSchema.optional(),
+        categories: z.array(nonEmptyStringSchema).min(1).optional(),
+    })
+    .strict()
+    .superRefine((value, ctx) => {
+        if ((value.type === 'rss' || value.type === 'scraping') && !value.url) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'RSS and scraping resource removals require a URL.',
+            });
+        }
 
-    if (value.type === 'quote' && (!value.categories || value.categories.length === 0)) {
-        ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'Quote resource removals require categories.',
-        });
-    }
-});
+        if (value.type === 'quote' && (!value.categories || value.categories.length === 0)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Quote resource removals require categories.',
+            });
+        }
+    });
 
 const controlActionSchema = z.discriminatedUnion('type', [
-    z.object({
-        type: z.literal('set_prompt'),
-        prompt_template: z.string(),
-    }).strict(),
-    z.object({
-        type: z.literal('set_name'),
-        name: nonEmptyStringSchema,
-    }).strict(),
-    z.object({
-        type: z.literal('set_categories'),
-        categories: z.array(nonEmptyStringSchema).min(1),
-    }).strict(),
-    z.object({
-        type: z.literal('set_personality'),
-        personality: z.enum(PERSONALITY_VALUES),
-    }).strict(),
-    z.object({
-        type: z.literal('set_frequency'),
-        frequency: z.enum(FREQUENCY_VALUES),
-    }).strict(),
-    z.object({
-        type: z.literal('set_relays'),
-        relays: z.array(relayUrlSchema).min(1),
-    }).strict(),
-    z.object({
-        type: z.literal('set_active'),
-        is_active: z.boolean(),
-    }).strict(),
-    z.object({
-        type: z.literal('add_resource'),
-        resource: resourceSchema,
-    }).strict(),
-    z.object({
-        type: z.literal('remove_resource'),
-        match: removeResourceMatchSchema,
-    }).strict(),
-    z.object({
-        type: z.literal('replace_resources'),
-        resources: z.array(resourceSchema),
-    }).strict(),
+    z
+        .object({
+            type: z.literal('set_prompt'),
+            prompt_template: z.string(),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_name'),
+            name: nonEmptyStringSchema,
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_categories'),
+            categories: z.array(nonEmptyStringSchema).min(1),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_personality'),
+            personality: z.enum(PERSONALITY_VALUES),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_frequency'),
+            frequency: z.enum(FREQUENCY_VALUES),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_relays'),
+            relays: z.array(relayUrlSchema).min(1),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_active'),
+            is_active: z.boolean(),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('add_resource'),
+            resource: resourceSchema,
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('remove_resource'),
+            match: removeResourceMatchSchema,
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('replace_resources'),
+            resources: z.array(resourceSchema),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('show_resources'),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('show_details'),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('show_help'),
+        })
+        .strict(),
 ]);
 
-const controlResponseSchema = z.object({
-    actions: z.array(controlActionSchema).min(1),
-}).strict();
+const controlResponseSchema = z
+    .object({
+        actions: z.array(controlActionSchema).min(1),
+    })
+    .strict();
 
 export function parseControlActionsResponse(text: string): ControlAction[] {
     const parsedJson = JSON.parse(extractJsonObject(text));
     const parsed = controlResponseSchema.parse(parsedJson);
     return parsed.actions as ControlAction[];
+}
+
+export function formatResources(resources?: Resource[]): string {
+    if (!resources || resources.length === 0) {
+        return 'Configured resources: none';
+    }
+
+    const items = resources.map((r) => {
+        const weightStr = r.weight !== undefined ? ` (weight: ${r.weight})` : '';
+        if (r.type === 'quote') {
+            return `• [quote] categories: ${r.categories.join(', ')}${weightStr}`;
+        }
+        return `• [${r.type}] ${r.url}${weightStr}`;
+    });
+
+    return `Configured resources (${resources.length}):\n${items.join('\n')}`;
+}
+
+export function formatAccountDetails(account: NostrAccount): string {
+    const categories =
+        account.categories && account.categories.length > 0
+            ? account.categories.join(', ')
+            : 'none';
+    const relays = account.relays && account.relays.length > 0 ? account.relays.join(', ') : 'none';
+    const frequency = account.frequency
+        ? formatFrequency(account.frequency as Frequency)
+        : 'unspecified';
+
+    const lines = [
+        `Name: ${account.name || 'unnamed'}`,
+        `Status: ${account.is_active ? 'active' : 'inactive'}`,
+        `Posting frequency: ${frequency}`,
+        `Personality: ${account.personality || 'unspecified'}`,
+        `Categories: ${categories}`,
+        `Relays: ${relays}`,
+    ];
+
+    return `Account details:\n${lines.join('\n')}`;
+}
+
+export function formatSupportedCommands(): string {
+    return [
+        'Supported commands:',
+        '• show details - View account schedule, personality, categories, and relays',
+        '• show resources - List configured RSS feeds, scraping feeds, and quote sources',
+        '• what commands do you support / help - View this command guide',
+        '• set personality <informative|humorous|enthusiastic|sarcastic|philosophical> - Update tone',
+        '• set frequency <hourly|every_2_hours|twice_a_day|daily> - Update posting schedule',
+        '• set active <true|false> - Activate or pause the bot',
+        '• set categories <cat1, cat2, ...> - Update topic categories',
+        '• set name <name> - Update bot display name',
+        '• set relays <relay1, relay2, ...> - Update target Nostr relays',
+        '• set prompt <template> - Update prompt template',
+        '• add resource <rss/scraping url | quote categories> [weight] - Add content source',
+        '• remove resource <url | categories> - Remove content source',
+        '• replace resources <sources> - Overwrite all data sources',
+    ].join('\n');
+}
+
+export function isQueryAction(action: ControlAction): boolean {
+    return (
+        action.type === 'show_resources' ||
+        action.type === 'show_details' ||
+        action.type === 'show_help'
+    );
 }
 
 export function applyControlActions(
@@ -145,6 +251,15 @@ export function applyControlActions(
 
     for (const action of actions) {
         switch (action.type) {
+            case 'show_resources':
+                summary.push(formatResources(updatedAccount.data_resources));
+                break;
+            case 'show_details':
+                summary.push(formatAccountDetails(updatedAccount));
+                break;
+            case 'show_help':
+                summary.push(formatSupportedCommands());
+                break;
             case 'set_prompt':
                 updatedAccount.prompt_template = action.prompt_template;
                 summary.push('updated the prompt template');
@@ -167,16 +282,22 @@ export function applyControlActions(
                 break;
             case 'set_relays':
                 updatedAccount.relays = uniqueStrings(action.relays);
-                summary.push(`set ${updatedAccount.relays.length} relay${updatedAccount.relays.length === 1 ? '' : 's'}`);
+                summary.push(
+                    `set ${updatedAccount.relays.length} relay${updatedAccount.relays.length === 1 ? '' : 's'}`
+                );
                 break;
             case 'set_active':
                 updatedAccount.is_active = action.is_active;
-                summary.push(action.is_active ? 'activated the account' : 'deactivated the account');
+                summary.push(
+                    action.is_active ? 'activated the account' : 'deactivated the account'
+                );
                 break;
             case 'add_resource': {
                 const nextResources = [...(updatedAccount.data_resources || [])];
                 const normalizedResource = normalizeResource(action.resource);
-                if (!nextResources.some((resource) => resourcesEqual(resource, normalizedResource))) {
+                if (
+                    !nextResources.some((resource) => resourcesEqual(resource, normalizedResource))
+                ) {
                     nextResources.push(normalizedResource);
                 }
                 updatedAccount.data_resources = nextResources;
@@ -185,17 +306,24 @@ export function applyControlActions(
             }
             case 'remove_resource': {
                 const beforeCount = (updatedAccount.data_resources || []).length;
-                updatedAccount.data_resources = (updatedAccount.data_resources || [])
-                    .filter((resource) => !resourceMatches(resource, action.match));
+                updatedAccount.data_resources = (updatedAccount.data_resources || []).filter(
+                    (resource) => !resourceMatches(resource, action.match)
+                );
                 const removedCount = beforeCount - updatedAccount.data_resources.length;
-                summary.push(removedCount > 0
-                    ? `removed ${removedCount} resource${removedCount === 1 ? '' : 's'}`
-                    : 'found no matching resource to remove');
+                summary.push(
+                    removedCount > 0
+                        ? `removed ${removedCount} resource${removedCount === 1 ? '' : 's'}`
+                        : 'found no matching resource to remove'
+                );
                 break;
             }
             case 'replace_resources':
-                updatedAccount.data_resources = dedupeResources(action.resources.map(normalizeResource));
-                summary.push(`replaced resources with ${updatedAccount.data_resources.length} configured source${updatedAccount.data_resources.length === 1 ? '' : 's'}`);
+                updatedAccount.data_resources = dedupeResources(
+                    action.resources.map(normalizeResource)
+                );
+                summary.push(
+                    `replaced resources with ${updatedAccount.data_resources.length} configured source${updatedAccount.data_resources.length === 1 ? '' : 's'}`
+                );
                 break;
         }
     }
@@ -213,24 +341,29 @@ export function isSupportedFrequency(value: string): value is Frequency {
 
 export function buildControlSchemaPrompt(): string {
     return [
-        'You convert admin Nostr notes into JSON account-update actions.',
+        'You convert admin Nostr notes into JSON account-update or query actions.',
         'Return JSON only with shape {"actions":[...]} and no markdown.',
-        'Only use the allowed action types: set_prompt, set_name, set_categories, set_personality, set_frequency, set_relays, set_active, add_resource, remove_resource, replace_resources.',
+        'Allowed action types: show_resources, show_details, show_help, set_prompt, set_name, set_categories, set_personality, set_frequency, set_relays, set_active, add_resource, remove_resource, replace_resources.',
+        'Use {"type":"show_resources"} when the admin asks to view, list, or show data/content resources.',
+        'Use {"type":"show_details"} when the admin asks for account details, settings, status, schedule/frequency, tone, or relays.',
+        'Use {"type":"show_help"} when the admin asks what commands are supported, available commands, or help.',
         'Never output private_key, id, created_at, last_run_at, control fields, or any code-change instructions.',
         'Use exact frequency values only: hourly, every_2_hours, twice_a_day, daily.',
         `Use exact personality values only: ${PERSONALITY_VALUES.join(', ')}.`,
         'For add_resource and replace_resources, use resource.type values rss, scraping, or quote.',
         'For rss/scraping resources include a full http/https url. For quote resources include categories.',
         'For remove_resource, use {"type":"remove_resource","match":{...}} with type plus url for rss/scraping or categories for quote.',
-        'If the request is ambiguous, unsupported, or does not clearly ask for a DB-backed config change, return {"actions":[]}.',
+        'If the request is ambiguous, unsupported, or does not clearly ask for a supported action or query, return {"actions":[]}.',
     ].join(' ');
 }
 
 export function validateInterpreterResponse(text: string): ControlAction[] {
     const parsedJson = JSON.parse(extractJsonObject(text));
-    const looseSchema = z.object({
-        actions: z.array(controlActionSchema),
-    }).strict();
+    const looseSchema = z
+        .object({
+            actions: z.array(controlActionSchema),
+        })
+        .strict();
     const parsed = looseSchema.parse(parsedJson);
 
     if (parsed.actions.length === 0) {
@@ -245,7 +378,9 @@ function cloneAccount(account: NostrAccount): NostrAccount {
         ...account,
         relays: [...account.relays],
         categories: [...account.categories],
-        data_resources: [...(account.data_resources || [])].map((resource) => normalizeResource(resource)),
+        data_resources: [...(account.data_resources || [])].map((resource) =>
+            normalizeResource(resource)
+        ),
         control_admin_pubkeys: [...(account.control_admin_pubkeys || [])],
     };
 }
@@ -361,8 +496,10 @@ function resourcesEqual(left: Resource, right: Resource): boolean {
     }
 
     if (left.type === 'quote' && right.type === 'quote') {
-        return left.weight === right.weight
-            && stringArraysEqual(uniqueStrings(left.categories), uniqueStrings(right.categories));
+        return (
+            left.weight === right.weight &&
+            stringArraysEqual(uniqueStrings(left.categories), uniqueStrings(right.categories))
+        );
     }
 
     if (left.type !== 'quote' && right.type !== 'quote') {
@@ -377,7 +514,9 @@ function resourcesListEqual(left: Resource[], right: Resource[]): boolean {
         return false;
     }
 
-    return left.every((resource, index) => resourcesEqual(normalizeResource(resource), normalizeResource(right[index])));
+    return left.every((resource, index) =>
+        resourcesEqual(normalizeResource(resource), normalizeResource(right[index]))
+    );
 }
 
 function dedupeResources(resources: Resource[]): Resource[] {

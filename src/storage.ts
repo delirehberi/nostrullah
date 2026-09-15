@@ -23,15 +23,17 @@ export class StorageService {
     }
 
     async updateLastRun(accountId: number): Promise<void> {
-        await this.db.prepare(
-            'UPDATE accounts SET last_run_at = ? WHERE id = ?'
-        ).bind(Math.floor(Date.now() / 1000), accountId).run();
+        await this.db
+            .prepare('UPDATE accounts SET last_run_at = ? WHERE id = ?')
+            .bind(Math.floor(Date.now() / 1000), accountId)
+            .run();
     }
 
     async updateControlLastCheckedAt(accountId: number, timestamp: number): Promise<void> {
-        await this.db.prepare(
-            'UPDATE accounts SET control_last_checked_at = ? WHERE id = ?'
-        ).bind(timestamp, accountId).run();
+        await this.db
+            .prepare('UPDATE accounts SET control_last_checked_at = ? WHERE id = ?')
+            .bind(timestamp, accountId)
+            .run();
     }
 
     shouldRun(lastRun: number, frequency: string): boolean {
@@ -92,36 +94,61 @@ export class StorageService {
         accountId: number,
         limit: number = StorageService.DEFAULT_POST_HISTORY_LIMIT
     ): Promise<string[]> {
-        const { results } = await this.db.prepare(
-            'SELECT content FROM post_history WHERE account_id = ? ORDER BY created_at DESC LIMIT ?'
-        ).bind(accountId, limit).all();
+        const { results } = await this.db
+            .prepare(
+                'SELECT content FROM post_history WHERE account_id = ? ORDER BY created_at DESC LIMIT ?'
+            )
+            .bind(accountId, limit)
+            .all();
         return results.map((r: any) => r.content);
     }
 
     async addPostToHistory(accountId: number, content: string, eventId?: string): Promise<void> {
-        await this.db.prepare(
-            'INSERT INTO post_history (account_id, content, event_id) VALUES (?, ?, ?)'
-        ).bind(accountId, content, eventId || null).run();
+        await this.db
+            .prepare('INSERT INTO post_history (account_id, content, event_id) VALUES (?, ?, ?)')
+            .bind(accountId, content, eventId || null)
+            .run();
+
+        // Prune to keep only the most recent 200 posts per account.
+        await this.db
+            .prepare(
+                `
+            DELETE FROM post_history
+            WHERE account_id = ?
+              AND id NOT IN (
+                SELECT id FROM post_history
+                WHERE account_id = ?
+                ORDER BY created_at DESC
+                LIMIT 200
+            )
+        `
+            )
+            .bind(accountId, accountId)
+            .run();
     }
 
     async findAccountIdByPostEventId(eventId: string): Promise<number | null> {
-        const result = await this.db.prepare(
-            'SELECT account_id FROM post_history WHERE event_id = ? LIMIT 1'
-        ).bind(eventId).first<{ account_id: number }>();
+        const result = await this.db
+            .prepare('SELECT account_id FROM post_history WHERE event_id = ? LIMIT 1')
+            .bind(eventId)
+            .first<{ account_id: number }>();
 
         return result?.account_id ?? null;
     }
 
     async hasProcessedControlEvent(eventId: string): Promise<boolean> {
-        const result = await this.db.prepare(
-            'SELECT event_id FROM processed_control_events WHERE event_id = ? LIMIT 1'
-        ).bind(eventId).first<{ event_id: string }>();
+        const result = await this.db
+            .prepare('SELECT event_id FROM processed_control_events WHERE event_id = ? LIMIT 1')
+            .bind(eventId)
+            .first<{ event_id: string }>();
 
         return Boolean(result?.event_id);
     }
 
     async recordProcessedControlEvent(record: ProcessedControlEventRecord): Promise<void> {
-        await this.db.prepare(`
+        await this.db
+            .prepare(
+                `
             INSERT INTO processed_control_events (
                 event_id,
                 account_id,
@@ -133,17 +160,20 @@ export class StorageService {
                 event_created_at,
                 processed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-            record.eventId,
-            record.accountId,
-            record.authorPubkey,
-            record.rawContent,
-            record.parsedActionsJson || null,
-            record.status,
-            record.resultMessage,
-            record.eventCreatedAt,
-            Math.floor(Date.now() / 1000)
-        ).run();
+        `
+            )
+            .bind(
+                record.eventId,
+                record.accountId,
+                record.authorPubkey,
+                record.rawContent,
+                record.parsedActionsJson || null,
+                record.status,
+                record.resultMessage,
+                record.eventCreatedAt,
+                Math.floor(Date.now() / 1000)
+            )
+            .run();
     }
 
     async updateAccountConfiguration(accountId: number, patch: AccountConfigPatch): Promise<void> {
@@ -196,8 +226,9 @@ export class StorageService {
 
         values.push(accountId);
 
-        await this.db.prepare(
-            `UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`
-        ).bind(...values).run();
+        await this.db
+            .prepare(`UPDATE accounts SET ${assignments.join(', ')} WHERE id = ?`)
+            .bind(...values)
+            .run();
     }
 }

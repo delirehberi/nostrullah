@@ -13,8 +13,8 @@ export function extractOutputText(response: any): string {
         throw new Error(`Unexpected AI response format: ${JSON.stringify(response)}`);
     }
 
-    const result = response.output.filter((c: any) =>
-        Array.isArray(c.content) && c.content.some((a: any) => a.type === 'output_text')
+    const result = response.output.filter(
+        (c: any) => Array.isArray(c.content) && c.content.some((a: any) => a.type === 'output_text')
     );
 
     if (result.length === 0) {
@@ -63,7 +63,7 @@ export class ContentGenerator {
             const categoryString = categories.join(', ');
             inputPrompt = `Generate a short, engaging social media post about ${categoryString}.`;
         }
-        
+
         // 3. Replace placeholders in the input prompt
         if (inputPrompt.includes('$$RESOURCES$$')) {
             inputPrompt = inputPrompt.replace('$$RESOURCES$$', context);
@@ -96,8 +96,8 @@ export class ContentGenerator {
                 this.ai.run(this.model as any, {
                     messages: [
                         { role: 'system', content: instructions },
-                        { role: 'user', content: inputPrompt }
-                    ]
+                        { role: 'user', content: inputPrompt },
+                    ],
                 })
             );
 

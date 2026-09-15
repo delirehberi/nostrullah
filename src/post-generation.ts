@@ -39,7 +39,9 @@ export interface GenerateValidatedPostOptions {
     similarityChecker?: PostSimilarityChecker;
 }
 
-export async function generateValidatedPost(options: GenerateValidatedPostOptions): Promise<GeneratedPostResult> {
+export async function generateValidatedPost(
+    options: GenerateValidatedPostOptions
+): Promise<GeneratedPostResult> {
     const attempts: GeneratedPostAttempt[] = [];
     const rejectedPosts: string[] = [];
     const maxAttempts = options.maxAttempts || DEFAULT_MAX_GENERATION_ATTEMPTS;
@@ -57,10 +59,10 @@ export async function generateValidatedPost(options: GenerateValidatedPostOption
         );
         const validation = await validateUrls(content);
         const similarityResult = options.similarityChecker
-            ? await options.similarityChecker.checkSimilarity(
-                content,
-                [...(options.similarityHistory || []), ...rejectedPosts]
-            )
+            ? await options.similarityChecker.checkSimilarity(content, [
+                  ...(options.similarityHistory || []),
+                  ...rejectedPosts,
+              ])
             : { isTooSimilar: false };
 
         attempts.push({
@@ -91,7 +93,25 @@ export async function generateValidatedPost(options: GenerateValidatedPostOption
         }
     }
 
-    throw new Error(`Failed to generate a unique post with valid URLs after ${maxAttempts} attempts`);
+    // All attempts failed validation. Rather than throwing (which silently drops the post),
+    // publish the best available candidate: prefer no invalid URLs, then lowest similarity score.
+    const bestAttempt =
+        attempts
+            .filter((a) => a.invalidUrls.length === 0)
+            .sort((a, b) => (a.similarityMatch?.score ?? 0) - (b.similarityMatch?.score ?? 0))[0] ??
+        attempts[attempts.length - 1];
+
+    console.warn(
+        `All ${maxAttempts} generation attempts were rejected. ` +
+            `Publishing best available candidate ` +
+            `(invalidUrls=${bestAttempt.invalidUrls.length}, ` +
+            `similarityScore=${bestAttempt.similarityMatch?.score ?? 'n/a'}).`
+    );
+
+    return {
+        attempts,
+        content: bestAttempt.content,
+    };
 }
 
 function buildRetryGuidance(attempts: GeneratedPostAttempt[]): string | undefined {

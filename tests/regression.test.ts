@@ -26,7 +26,9 @@ describe('StorageService.shouldRun', () => {
             vi.setSystemTime(now);
 
             const storage = new StorageService({ DB: {} as D1Database } as any);
-            const lastRunSeconds = Math.floor(new Date('2026-05-06T00:00:00.000Z').getTime() / 1000);
+            const lastRunSeconds = Math.floor(
+                new Date('2026-05-06T00:00:00.000Z').getTime() / 1000
+            );
 
             expect(storage.shouldRun(lastRunSeconds, 'twice_a_day')).toBe(true);
         } finally {
@@ -62,7 +64,7 @@ describe('ContentGenerator.generatePost', () => {
             expect.objectContaining({
                 messages: [
                     { role: 'system', content: expect.stringContaining('informative assistant') },
-                    { role: 'user', content: expect.any(String) }
+                    { role: 'user', content: expect.any(String) },
                 ],
             })
         );

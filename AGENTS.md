@@ -41,54 +41,54 @@ This project is a headless Nostr bot running on Cloudflare Workers.
 ### Source Files
 
 - `src/index.ts`
-  - Worker entrypoint.
-  - Contains both `scheduled()` and a guarded `fetch()` preview endpoint.
+    - Worker entrypoint.
+    - Contains both `scheduled()` and a guarded `fetch()` preview endpoint.
 
 - `src/config.ts`
-  - Loads active accounts from D1 and parses JSON-backed fields.
+    - Loads active accounts from D1 and parses JSON-backed fields.
 
 - `src/ai.ts`
-  - Builds prompts and calls the configured Cloudflare AI model.
-  - Applies personality templates from `prompts/`.
+    - Builds prompts and calls the configured Cloudflare AI model.
+    - Applies personality templates from `prompts/`.
 
 - `src/nostr.ts`
-  - Derives public keys, signs events, and publishes to relays.
-  - Supports both `nsec` and hex private keys.
+    - Derives public keys, signs events, and publishes to relays.
+    - Supports both `nsec` and hex private keys.
 
 - `src/storage.ts`
-  - Handles D1 reads/writes for `last_run_at` and `post_history`.
-  - Contains posting-frequency logic.
+    - Handles D1 reads/writes for `last_run_at` and `post_history`.
+    - Contains posting-frequency logic.
 
 - `src/resources.ts`
-  - Performs weighted resource selection.
-  - Supports `rss`, `scraping`, and `quote` resources.
+    - Performs weighted resource selection.
+    - Supports `rss`, `scraping`, and `quote` resources.
 
 - `src/types.ts`
-  - Shared TypeScript types, including `Env`, `NostrAccount`, and `Resource`.
+    - Shared TypeScript types, including `Env`, `NostrAccount`, and `Resource`.
 
 - `src/utils.ts`
-  - Shared utilities such as `withRetry()`.
+    - Shared utilities such as `withRetry()`.
 
 ### Supporting Files
 
 - `prompts/`
-  - Personality instruction templates.
-  - Current personalities are `informative`, `humorous`, `enthusiastic`, `sarcastic`, and `philosophical`.
+    - Personality instruction templates.
+    - Current personalities are `informative`, `humorous`, `enthusiastic`, `sarcastic`, and `philosophical`.
 
 - `migrations/`
-  - D1 schema migrations.
+    - D1 schema migrations.
 
 - `scripts/generate-key.ts`
-  - Generates new Nostr keys in hex and `nsec` format.
+    - Generates new Nostr keys in hex and `nsec` format.
 
 - `add_resource.sh`
-  - Updates `data_resources` for an account in remote D1.
+    - Updates `data_resources` for an account in remote D1.
 
 - `update_prompt.sh`
-  - Opens an account prompt template in `vim` and writes it back to remote D1.
+    - Opens an account prompt template in `vim` and writes it back to remote D1.
 
 - `Makefile`
-  - Shortcuts for deployment and account-specific prompt/resource management.
+    - Shortcuts for deployment and account-specific prompt/resource management.
 
 ## Build, Lint, and Test Commands
 
@@ -243,9 +243,9 @@ Sanity-check docs and scripts against the actual code before reusing old wording
 ## Known Gotchas
 
 - `README.md` is stale in a few important ways:
-  - it still mentions KV-backed state, but the worker now uses D1
-  - it documents `NOSTR_ACCOUNTS`, but account loading currently comes from D1
-  - it references `npm run start`, but that script does not exist
+    - it still mentions KV-backed state, but the worker now uses D1
+    - it documents `NOSTR_ACCOUNTS`, but account loading currently comes from D1
+    - it references `npm run start`, but that script does not exist
 
 - `wrangler.toml` currently contains account-like data in `[vars].NOSTR_ACCOUNTS`, but the active account-loading path does not use it.
 

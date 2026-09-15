@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-    applyControlActions,
-    validateInterpreterResponse,
-} from '../src/control-actions';
+import { applyControlActions, validateInterpreterResponse } from '../src/control-actions';
 import { NostrAccount } from '../src/types';
 
 const baseAccount: NostrAccount = {
@@ -25,21 +22,23 @@ const baseAccount: NostrAccount = {
 
 describe('validateInterpreterResponse', () => {
     it('accepts supported control actions', () => {
-        const actions = validateInterpreterResponse(JSON.stringify({
-            actions: [
-                {
-                    type: 'set_prompt',
-                    prompt_template: 'Write in a calmer tone.',
-                },
-                {
-                    type: 'add_resource',
-                    resource: {
-                        type: 'rss',
-                        url: 'https://example.com/second.xml',
+        const actions = validateInterpreterResponse(
+            JSON.stringify({
+                actions: [
+                    {
+                        type: 'set_prompt',
+                        prompt_template: 'Write in a calmer tone.',
                     },
-                },
-            ],
-        }));
+                    {
+                        type: 'add_resource',
+                        resource: {
+                            type: 'rss',
+                            url: 'https://example.com/second.xml',
+                        },
+                    },
+                ],
+            })
+        );
 
         expect(actions).toHaveLength(2);
         expect(actions[0].type).toBe('set_prompt');
@@ -51,35 +50,47 @@ describe('validateInterpreterResponse', () => {
     });
 
     it('rejects extra or disallowed fields like private_key', () => {
-        expect(() => validateInterpreterResponse(JSON.stringify({
-            actions: [
-                {
-                    type: 'set_prompt',
-                    prompt_template: 'new prompt',
-                    private_key: 'nope',
-                },
-            ],
-        }))).toThrow();
+        expect(() =>
+            validateInterpreterResponse(
+                JSON.stringify({
+                    actions: [
+                        {
+                            type: 'set_prompt',
+                            prompt_template: 'new prompt',
+                            private_key: 'nope',
+                        },
+                    ],
+                })
+            )
+        ).toThrow();
     });
 
     it('rejects invalid frequencies and personalities', () => {
-        expect(() => validateInterpreterResponse(JSON.stringify({
-            actions: [
-                {
-                    type: 'set_frequency',
-                    frequency: 'weekly',
-                },
-            ],
-        }))).toThrow();
+        expect(() =>
+            validateInterpreterResponse(
+                JSON.stringify({
+                    actions: [
+                        {
+                            type: 'set_frequency',
+                            frequency: 'weekly',
+                        },
+                    ],
+                })
+            )
+        ).toThrow();
 
-        expect(() => validateInterpreterResponse(JSON.stringify({
-            actions: [
-                {
-                    type: 'set_personality',
-                    personality: 'chaotic',
-                },
-            ],
-        }))).toThrow();
+        expect(() =>
+            validateInterpreterResponse(
+                JSON.stringify({
+                    actions: [
+                        {
+                            type: 'set_personality',
+                            personality: 'chaotic',
+                        },
+                    ],
+                })
+            )
+        ).toThrow();
     });
 });
 
@@ -125,10 +136,7 @@ describe('applyControlActions', () => {
         expect(result.updatedAccount.categories).toEqual(['technology', 'ai']);
         expect(result.updatedAccount.frequency).toBe('hourly');
         expect(result.updatedAccount.personality).toBe('humorous');
-        expect(result.updatedAccount.relays).toEqual([
-            'wss://relay.example',
-            'wss://relay.second',
-        ]);
+        expect(result.updatedAccount.relays).toEqual(['wss://relay.example', 'wss://relay.second']);
         expect(result.updatedAccount.data_resources).toEqual([
             {
                 type: 'rss',
@@ -178,5 +186,47 @@ describe('applyControlActions', () => {
                 url: 'https://example.com/second.xml',
             },
         ]);
+    });
+
+    it('handles query actions (show_resources, show_details, show_help)', () => {
+        const result = applyControlActions(baseAccount, [
+            { type: 'show_details' },
+            { type: 'show_resources' },
+            { type: 'show_help' },
+        ]);
+
+        expect(Object.keys(result.patch)).toHaveLength(0);
+        expect(result.summary).toHaveLength(3);
+
+        // Details check
+        const detailsSummary = result.summary[0];
+        expect(detailsSummary).toContain('Account details:');
+        expect(detailsSummary).toContain('Name: Tech Bot');
+        expect(detailsSummary).toContain('Status: active');
+        expect(detailsSummary).toContain('Posting frequency: daily');
+        expect(detailsSummary).toContain('Personality: informative');
+        expect(detailsSummary).toContain('Categories: technology');
+        expect(detailsSummary).toContain('Relays: wss://relay.example');
+        // Ensure prompt template and private key are NOT leaked
+        expect(detailsSummary).not.toContain('Original prompt');
+        expect(detailsSummary).not.toContain('nsec1testkey');
+
+        // Resources check
+        const resourcesSummary = result.summary[1];
+        expect(resourcesSummary).toContain('Configured resources (1):');
+        expect(resourcesSummary).toContain('https://example.com/feed.xml');
+
+        // Help check
+        const helpSummary = result.summary[2];
+        expect(helpSummary).toContain('Supported commands:');
+        expect(helpSummary).toContain('show details');
+        expect(helpSummary).toContain('show resources');
+        expect(helpSummary).toContain('what commands do you support');
+    });
+
+    it('formats empty resource list properly', () => {
+        const accountWithoutResources = { ...baseAccount, data_resources: [] };
+        const result = applyControlActions(accountWithoutResources, [{ type: 'show_resources' }]);
+        expect(result.summary[0]).toBe('Configured resources: none');
     });
 });

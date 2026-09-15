@@ -7,7 +7,7 @@ export class ResourceService {
     constructor() {
         this.parser = new XMLParser({
             ignoreAttributes: false,
-            attributeNamePrefix: "@_"
+            attributeNamePrefix: '@_',
         });
     }
 
@@ -50,7 +50,7 @@ export class ResourceService {
 
         for (const resource of resources) {
             const weight = resource.weight || 1;
-            if (random < weight) {
+            if (random <= weight) {
                 return resource;
             }
             random -= weight;
@@ -66,8 +66,9 @@ export class ResourceService {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data: any = await response.json();
-        if (data && data.content) {
-            return `"${data.content}" - ${data.author}`;
+        const quote = Array.isArray(data) ? data[0] : data;
+        if (quote?.content) {
+            return `"${quote.content}" - ${quote.author}`;
         }
         return '';
     }
@@ -76,8 +77,8 @@ export class ResourceService {
         const response = await fetch(url, {
             headers: {
                 'User-Agent': 'NostrBot/1.0 (Scraper)',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-            }
+                Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            },
         });
 
         if (!response.ok) {
@@ -85,35 +86,37 @@ export class ResourceService {
         }
 
         let accumulatedText = '';
-        
-        class TextHandler {
+
+        class BlockHandler {
+            element(_element: any) {
+                if (accumulatedText.length > 0 && !accumulatedText.endsWith('\n')) {
+                    accumulatedText += '\n';
+                }
+            }
+
             text(textInfo: any) {
                 accumulatedText += textInfo.text;
             }
         }
 
-        class SpacingHandler {
-            element(element: any) {
-                accumulatedText += ' ';
-            }
-        }
-
-        const rewriter = new HTMLRewriter()
-            .on('p, h1, h2, h3, h4, h5, h6, li, article, section', new TextHandler())
-            .on('p, h1, h2, h3, h4, h5, h6, li, article, section, div, br', new SpacingHandler());
+        const rewriter = new HTMLRewriter().on(
+            'p, h1, h2, h3, h4, h5, h6, li, article, section',
+            new BlockHandler()
+        );
 
         await rewriter.transform(response).text();
 
-        return accumulatedText.replace(/\s+/g, ' ').trim().slice(0, 5000); // Truncate to avoid massive context
+        return accumulatedText
+            .replace(/\n{3,}/g, '\n\n')
+            .trim()
+            .slice(0, 5000);
     }
-
-
 
     private async fetchAndParseRSS(url: string): Promise<string> {
         const response = await fetch(url, {
             headers: {
-                'User-Agent': 'NostrBot/1.0'
-            }
+                'User-Agent': 'NostrBot/1.0',
+            },
         });
 
         if (!response.ok) {
@@ -130,37 +133,32 @@ export class ResourceService {
                 ? jsonObj.rss.channel.item
                 : [jsonObj.rss.channel.item];
         } else if (jsonObj.feed?.entry) {
-            items = Array.isArray(jsonObj.feed.entry)
-                ? jsonObj.feed.entry
-                : [jsonObj.feed.entry];
+            items = Array.isArray(jsonObj.feed.entry) ? jsonObj.feed.entry : [jsonObj.feed.entry];
         }
 
-        // Extract top 3 items
-        const topItems = items.slice(0, 3);
+        // Pick one random item from the top 10 so each run uses a different article.
+        const candidateItems = items.slice(0, 10);
+        if (candidateItems.length === 0) {
+            return '';
+        }
 
-        let output = '';
+        const item = candidateItems[Math.floor(Math.random() * candidateItems.length)];
+        const title = this.extractTextValue(item.title) || 'Untitled';
+        const link = this.extractItemLink(item);
+        const desc = this.extractTextValue(
+            item.description || item.summary || item['content:encoded'] || ''
+        );
+        const cleanDesc = desc.replace(/<[^>]*>?/gm, '');
 
-        topItems.forEach((item: any) => {
-            const title = this.extractTextValue(item.title) || 'Untitled';
-            const link = this.extractItemLink(item);
-            const desc = this.extractTextValue(item.description || item.summary || item['content:encoded'] || '');
-            const cleanDesc = desc.replace(/<[^>]*>?/gm, '');
-
-            output += `Title: ${title}\n`;
-            if (cleanDesc) output += `Summary: ${cleanDesc.slice(0, 150)}...\n`;
-            if (link) output += `Link: ${link}\n`;
-            output += '---\n';
-        });
+        let output = `Title: ${title}\n`;
+        if (cleanDesc) output += `Summary: ${cleanDesc.slice(0, 300)}...\n`;
+        if (link) output += `Link: ${link}\n`;
 
         return output;
     }
 
     private extractItemLink(item: any): string | undefined {
-        const candidates = [
-            item.link,
-            item.guid,
-            item.id,
-        ];
+        const candidates = [item.link, item.guid, item.id];
 
         for (const candidate of candidates) {
             const normalized = this.normalizeLinkCandidate(candidate);

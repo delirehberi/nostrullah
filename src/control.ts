@@ -6,6 +6,7 @@ import {
     AppliedControlActions,
     applyControlActions,
     buildControlSchemaPrompt,
+    isQueryAction,
     validateInterpreterResponse,
 } from './control-actions';
 import { NostrQueryFilter, NostrService, PublishEventResult } from './nostr';
@@ -54,22 +55,29 @@ export class ControlCommandInterpreter {
         this.env = env;
     }
 
-    async interpret(noteContent: string, account: NostrAccount): Promise<ReturnType<typeof validateInterpreterResponse>> {
+    async interpret(
+        noteContent: string,
+        account: NostrAccount
+    ): Promise<ReturnType<typeof validateInterpreterResponse>> {
         const response: any = await withRetry(() =>
             this.env.AI.run(this.env.AI_MODEL as any, {
                 instructions: buildControlSchemaPrompt(),
                 input: [
                     'Current account configuration:',
-                    JSON.stringify({
-                        name: account.name || null,
-                        relays: account.relays,
-                        categories: account.categories,
-                        frequency: account.frequency,
-                        data_resources: account.data_resources || [],
-                        prompt_template: account.prompt_template || null,
-                        personality: account.personality || null,
-                        is_active: Boolean(account.is_active),
-                    }, null, 2),
+                    JSON.stringify(
+                        {
+                            name: account.name || null,
+                            relays: account.relays,
+                            categories: account.categories,
+                            frequency: account.frequency,
+                            data_resources: account.data_resources || [],
+                            prompt_template: account.prompt_template || null,
+                            personality: account.personality || null,
+                            is_active: Boolean(account.is_active),
+                        },
+                        null,
+                        2
+                    ),
                     '',
                     'Admin note:',
                     noteContent,
@@ -97,7 +105,11 @@ export class ControlProcessor {
     ) => Promise<PublishEventResult>;
     private interpreter: ControlCommandInterpreter;
 
-    constructor(env: Env, storage: StorageService, dependencies: ControlProcessorDependencies = {}) {
+    constructor(
+        env: Env,
+        storage: StorageService,
+        dependencies: ControlProcessorDependencies = {}
+    ) {
         this.storage = storage;
         this.queryEvents = dependencies.queryEvents || NostrService.queryEvents;
         this.publishEvent = dependencies.publishEvent || NostrService.publishEvent;
@@ -106,10 +118,11 @@ export class ControlProcessor {
 
     async processAccounts(accounts: NostrAccount[]): Promise<void> {
         const managedAccounts = accounts
-            .filter((account): account is NostrAccount & { id: number } =>
-                Boolean(account.id)
-                && Boolean(account.control_enabled)
-                && (account.control_admin_pubkeys || []).length > 0
+            .filter(
+                (account): account is NostrAccount & { id: number } =>
+                    Boolean(account.id) &&
+                    Boolean(account.control_enabled) &&
+                    (account.control_admin_pubkeys || []).length > 0
             )
             .map((account) => ({
                 account,
@@ -142,7 +155,9 @@ export class ControlProcessor {
         });
 
         for (const discoveredEvent of orderedEvents) {
-            const alreadyProcessed = await this.storage.hasProcessedControlEvent(discoveredEvent.event.id);
+            const alreadyProcessed = await this.storage.hasProcessedControlEvent(
+                discoveredEvent.event.id
+            );
             if (alreadyProcessed) {
                 continue;
             }
@@ -183,7 +198,10 @@ export class ControlProcessor {
                 account.account.control_last_checked_at = maxSeenTimestamp;
             }
         } catch (error) {
-            console.error(`Failed to poll control events for account ${account.pubkey.slice(0, 8)}...`, error);
+            console.error(
+                `Failed to poll control events for account ${account.pubkey.slice(0, 8)}...`,
+                error
+            );
         }
     }
 
@@ -206,13 +224,19 @@ export class ControlProcessor {
                 accountId: resolution.replyAccount.accountId,
                 event: discoveredEvent.event,
                 status: 'rejected',
-                message: resolution.error || 'Could not determine which account this command should update.',
+                message:
+                    resolution.error ||
+                    'Could not determine which account this command should update.',
             });
             return;
         }
 
         const targetAccount = resolution.targetAccount;
-        if (!(targetAccount.account.control_admin_pubkeys || []).includes(discoveredEvent.event.pubkey)) {
+        if (
+            !(targetAccount.account.control_admin_pubkeys || []).includes(
+                discoveredEvent.event.pubkey
+            )
+        ) {
             await this.rejectEvent({
                 replyAccount: resolution.replyAccount,
                 accountId: targetAccount.accountId,
@@ -226,37 +250,56 @@ export class ControlProcessor {
         let parsedActionsJson: string | undefined;
 
         try {
-            const actions = await this.interpreter.interpret(discoveredEvent.event.content, targetAccount.account);
+            const actions = await this.interpreter.interpret(
+                discoveredEvent.event.content,
+                targetAccount.account
+            );
             parsedActionsJson = JSON.stringify(actions);
 
             const applied = applyControlActions(targetAccount.account, actions);
             const changeCount = Object.keys(applied.patch).length;
 
             if (changeCount > 0) {
-                await this.storage.updateAccountConfiguration(targetAccount.accountId, applied.patch);
+                await this.storage.updateAccountConfiguration(
+                    targetAccount.accountId,
+                    applied.patch
+                );
                 targetAccount.account = {
                     ...targetAccount.account,
                     ...applied.updatedAccount,
                 };
             }
 
+            const hasQueryActions = actions.some(isQueryAction);
+            const hasMutationActions = actions.some((a) => !isQueryAction(a));
+
             const acknowledgement = await this.publishAcknowledgement(
                 resolution.replyAccount,
                 discoveredEvent.event,
                 targetAccount.account,
                 applied,
-                changeCount === 0
+                actions
             );
 
-            await this.storage.recordProcessedControlEvent(buildProcessedRecord({
-                accountId: targetAccount.accountId,
-                event: discoveredEvent.event,
-                parsedActionsJson,
-                status: changeCount === 0 ? 'ignored' : 'applied',
-                resultMessage: acknowledgement,
-            }));
+            const status =
+                changeCount > 0 || hasQueryActions
+                    ? 'applied'
+                    : hasMutationActions
+                      ? 'ignored'
+                      : 'applied';
+
+            await this.storage.recordProcessedControlEvent(
+                buildProcessedRecord({
+                    accountId: targetAccount.accountId,
+                    event: discoveredEvent.event,
+                    parsedActionsJson,
+                    status,
+                    resultMessage: acknowledgement,
+                })
+            );
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Unknown control processing error.';
+            const message =
+                error instanceof Error ? error.message : 'Unknown control processing error.';
             await this.rejectEvent({
                 replyAccount: resolution.replyAccount,
                 accountId: targetAccount.accountId,
@@ -273,12 +316,40 @@ export class ControlProcessor {
         event: Event,
         targetAccount: NostrAccount,
         applied: AppliedControlActions,
-        isNoop: boolean
+        actions: ControlAction[]
     ): Promise<string> {
-        const targetLabel = targetAccount.name || NostrService.getPublicKeyFromPrivate(targetAccount.privateKey).slice(0, 8);
-        const content = isNoop
-            ? `No changes were needed for ${targetLabel}. ${applied.summary.join('; ')}.`
-            : `Applied ${applied.summary.length} change${applied.summary.length === 1 ? '' : 's'} to ${targetLabel}: ${applied.summary.join('; ')}.`;
+        const targetLabel =
+            targetAccount.name ||
+            NostrService.getPublicKeyFromPrivate(targetAccount.privateKey).slice(0, 8);
+
+        const hasQuery = actions.some(isQueryAction);
+        const hasMutation = actions.some((a) => !isQueryAction(a));
+        const changeCount = Object.keys(applied.patch).length;
+
+        let content: string;
+
+        if (hasMutation && !hasQuery) {
+            content =
+                changeCount === 0
+                    ? `No changes were needed for ${targetLabel}. ${applied.summary.join('; ')}.`
+                    : `Applied ${applied.summary.length} change${applied.summary.length === 1 ? '' : 's'} to ${targetLabel}: ${applied.summary.join('; ')}.`;
+        } else if (!hasMutation && hasQuery) {
+            content = applied.summary.join('\n\n');
+        } else {
+            const isQuerySummary = (text: string) =>
+                text.startsWith('Account details:') ||
+                text.startsWith('Configured resources') ||
+                text.startsWith('Supported commands:');
+            const mutationSummary = applied.summary.filter((s) => !isQuerySummary(s));
+            const querySummary = applied.summary.filter(isQuerySummary);
+
+            const mutationPrefix =
+                changeCount === 0
+                    ? `No changes were needed for ${targetLabel}. ${mutationSummary.join('; ')}.`
+                    : `Applied ${mutationSummary.length} change${mutationSummary.length === 1 ? '' : 's'} to ${targetLabel}: ${mutationSummary.join('; ')}.`;
+
+            content = [mutationPrefix, ...querySummary].filter(Boolean).join('\n\n');
+        }
 
         const publishResult = await this.publishEvent(replyAccount.account, content, {
             replyToEventId: event.id,
@@ -313,13 +384,15 @@ export class ControlProcessor {
             console.error('Failed to publish control rejection acknowledgement:', error);
         }
 
-        await this.storage.recordProcessedControlEvent(buildProcessedRecord({
-            accountId: options.accountId,
-            event: options.event,
-            parsedActionsJson: options.parsedActionsJson,
-            status: options.status,
-            resultMessage: options.message,
-        }));
+        await this.storage.recordProcessedControlEvent(
+            buildProcessedRecord({
+                accountId: options.accountId,
+                event: options.event,
+                parsedActionsJson: options.parsedActionsJson,
+                status: options.status,
+                resultMessage: options.message,
+            })
+        );
     }
 }
 
@@ -365,13 +438,15 @@ export async function resolveTargetAccount(
         };
     }
 
-    const mentionedManagedAccounts = [...new Set(
-        event.tags
-            .filter((tag) => tag[0] === 'p' && tag[1])
-            .map((tag) => tag[1])
-            .map((pubkey) => accountsByPubkey.get(pubkey))
-            .filter((account): account is ManagedAccountContext => Boolean(account))
-    )];
+    const mentionedManagedAccounts = [
+        ...new Set(
+            event.tags
+                .filter((tag) => tag[0] === 'p' && tag[1])
+                .map((tag) => tag[1])
+                .map((pubkey) => accountsByPubkey.get(pubkey))
+                .filter((account): account is ManagedAccountContext => Boolean(account))
+        ),
+    ];
 
     if (mentionedManagedAccounts.length === 1) {
         return {

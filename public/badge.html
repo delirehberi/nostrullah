@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>nostr.org.tr Interactive Pill Badge Preview</title>
+        <style>
+            :root {
+                --bg-page: #09090b;
+                --text-page: #f4f4f5;
+                --card-bg: #18181b;
+                --card-border: #27272a;
+            }
+
+            body.theme-light {
+                --bg-page: #f8fafc;
+                --text-page: #0f172a;
+                --card-bg: #ffffff;
+                --card-border: #e2e8f0;
+            }
+
+            body {
+                margin: 0;
+                padding: 40px 20px;
+                background-color: var(--bg-page);
+                color: var(--text-page);
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                min-height: 100vh;
+                box-sizing: border-box;
+                transition:
+                    background-color 0.3s ease,
+                    color 0.3s ease;
+            }
+
+            .container {
+                max-width: 800px;
+                width: 100%;
+                display: flex;
+                flex-direction: column;
+                gap: 32px;
+            }
+
+            header {
+                text-align: center;
+            }
+
+            h1 {
+                font-size: 28px;
+                font-weight: 700;
+                margin: 0 0 8px 0;
+                background: linear-gradient(135deg, #c084fc, #ec4899);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+
+            p.subtitle {
+                margin: 0;
+                color: #a1a1aa;
+                font-size: 15px;
+            }
+
+            .card {
+                background: var(--card-bg);
+                border: 1px solid var(--card-border);
+                border-radius: 16px;
+                padding: 24px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 20px;
+                box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.2);
+            }
+
+            .card-title {
+                font-size: 14px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                color: #a1a1aa;
+                margin: 0;
+                align-self: flex-start;
+            }
+
+            .preview-box {
+                padding: 30px;
+                width: 100%;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                background: rgba(0, 0, 0, 0.2);
+                border-radius: 12px;
+                box-sizing: border-box;
+            }
+
+            .controls {
+                display: flex;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+
+            button.btn {
+                background: #27272a;
+                color: #ffffff;
+                border: 1px solid #3f3f46;
+                padding: 8px 16px;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 13px;
+                font-weight: 500;
+                transition: all 0.2s ease;
+            }
+
+            button.btn:hover {
+                background: #3f3f46;
+                border-color: #71717a;
+            }
+
+            .code-snippet {
+                width: 100%;
+                background: #121214;
+                color: #e4e4e7;
+                padding: 16px;
+                border-radius: 8px;
+                font-family: 'JetBrains Mono', monospace, Consolas;
+                font-size: 13px;
+                overflow-x: auto;
+                box-sizing: border-box;
+                border: 1px solid #27272a;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <header>
+                <h1>nostr.org.tr Interactive Pill Badge</h1>
+                <p class="subtitle">Multi-language auto-cycling pill badge component</p>
+            </header>
+
+            <div class="card">
+                <h2 class="card-title">Live Preview (Web Component)</h2>
+                <div class="preview-box">
+                    <nostr-community-badge id="hero-badge" interval="4000"></nostr-community-badge>
+                </div>
+                <div class="controls">
+                    <button class="btn" onclick="toggleTheme()">🌓 Toggle Page Theme</button>
+                    <button class="btn" onclick="toggleBadgeTheme()">
+                        🎨 Toggle Badge Theme Attribute
+                    </button>
+                    <button class="btn" onclick="setLang('TR')">Switch to TR</button>
+                    <button class="btn" onclick="setLang('EN')">Switch to EN</button>
+                    <button class="btn" onclick="setLang('ES')">Switch to ES</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="card-title">Usage Example</h2>
+                <pre class="code-snippet"><code>&lt;!-- Include script --&gt;
+&lt;script type="module" src="badge.js"&gt;&lt;/script&gt;
+
+&lt;!-- Embed Badge Element --&gt;
+&lt;nostr-community-badge 
+    initial-lang="EN" 
+    auto-cycle="true" 
+    interval="4000"&gt;
+&lt;/nostr-community-badge&gt;</code></pre>
+            </div>
+        </div>
+
+        <script type="module" src="../src/badge.ts"></script>
+        <script>
+            function toggleTheme() {
+                document.body.classList.toggle('theme-light');
+            }
+
+            function toggleBadgeTheme() {
+                const badge = document.getElementById('hero-badge');
+                const current = badge.getAttribute('theme');
+                badge.setAttribute('theme', current === 'light' ? 'dark' : 'light');
+            }
+
+            function setLang(lang) {
+                const badge = document.getElementById('hero-badge');
+                if (badge && typeof badge.setLanguage === 'function') {
+                    badge.setLanguage(lang);
+                }
+            }
+        </script>
+    </body>
+</html>

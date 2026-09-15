@@ -9,7 +9,11 @@ interface GetAccountsOptions {
 const stringArraySchema = z.array(z.string()).default([]);
 const resourcesArraySchema = z.array(resourceSchema).default([]);
 
-const safeParseJson = <T>(jsonString: string | null | undefined, schema: z.ZodType<T>, defaultValue: T): T => {
+const safeParseJson = <T>(
+    jsonString: string | null | undefined,
+    schema: z.ZodType<T>,
+    defaultValue: T
+): T => {
     if (!jsonString) return defaultValue;
     try {
         const parsed = JSON.parse(jsonString);
@@ -33,9 +37,7 @@ export const getAccounts = async (
         const query = options.includeInactive
             ? 'SELECT * FROM accounts'
             : 'SELECT * FROM accounts WHERE is_active = 1';
-        const { results } = await env.DB.prepare(
-            query
-        ).all();
+        const { results } = await env.DB.prepare(query).all();
 
         return results.map((row: any) => ({
             id: row.id,

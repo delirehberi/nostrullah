@@ -1,6 +1,7 @@
 import { Ai } from '@cloudflare/workers-types';
 import { Env } from './types';
 import { withRetry } from './utils';
+import { extractOutputText } from './ai';
 
 const DIRECT_REJECTION_THRESHOLD = 0.96;
 const LLM_REVIEW_THRESHOLD = 0.55;
@@ -68,7 +69,10 @@ export class ContentSimilarityService implements PostSimilarityChecker {
         this.model = env.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct';
     }
 
-    async checkSimilarity(content: string, previousPosts: string[]): Promise<SimilarityCheckResult> {
+    async checkSimilarity(
+        content: string,
+        previousPosts: string[]
+    ): Promise<SimilarityCheckResult> {
         const normalizedContent = normalizeText(content);
         if (!normalizedContent) {
             return {
@@ -81,10 +85,12 @@ export class ContentSimilarityService implements PostSimilarityChecker {
             .filter((candidate) => candidate.score >= LLM_REVIEW_THRESHOLD)
             .sort((left, right) => right.score - left.score);
 
-        const directMatch = candidates.find((candidate) =>
-            candidate.exactMatch
-            || (candidate.containmentMatch && normalizedContent.length >= MIN_CONTAINMENT_LENGTH)
-            || candidate.score >= DIRECT_REJECTION_THRESHOLD
+        const directMatch = candidates.find(
+            (candidate) =>
+                candidate.exactMatch ||
+                (candidate.containmentMatch &&
+                    normalizedContent.length >= MIN_CONTAINMENT_LENGTH) ||
+                candidate.score >= DIRECT_REJECTION_THRESHOLD
         );
 
         if (directMatch) {
@@ -113,15 +119,19 @@ export class ContentSimilarityService implements PostSimilarityChecker {
                 };
             }
 
-            const matchedIndex = review.matched_index && review.matched_index > 0
-                ? review.matched_index - 1
-                : 0;
+            const matchedIndex =
+                typeof review.matched_index === 'number' && review.matched_index >= 1
+                    ? review.matched_index - 1
+                    : 0;
+
             const candidate = llmCandidates[matchedIndex] || llmCandidates[0];
             return {
                 isTooSimilar: true,
                 match: {
                     previousPost: candidate.previousPost,
-                    reason: review.reason || 'LLM similarity review flagged this as too close to a past post.',
+                    reason:
+                        review.reason ||
+                        'LLM similarity review flagged this as too close to a past post.',
                     score: candidate.score,
                 },
             };
@@ -162,13 +172,15 @@ export class ContentSimilarityService implements PostSimilarityChecker {
                     `New post:\n${content}`,
                     '',
                     'Previous posts to compare:',
-                    ...candidates.map((candidate, index) => [
-                        `${index + 1}. ${candidate.previousPost}`,
-                        `Heuristic score: ${candidate.score.toFixed(2)}`,
-                        candidate.sharedTerms.length > 0
-                            ? `Shared terms: ${candidate.sharedTerms.join(', ')}`
-                            : 'Shared terms: none',
-                    ].join('\n')),
+                    ...candidates.map((candidate, index) =>
+                        [
+                            `${index + 1}. ${candidate.previousPost}`,
+                            `Heuristic score: ${candidate.score.toFixed(2)}`,
+                            candidate.sharedTerms.length > 0
+                                ? `Shared terms: ${candidate.sharedTerms.join(', ')}`
+                                : 'Shared terms: none',
+                        ].join('\n')
+                    ),
                     '',
                     'Respond as JSON only. Use matched_index=null if none are too similar.',
                 ].join('\n'),
@@ -204,8 +216,8 @@ function buildCandidate(content: string, previousPost: string): SimilarityCandid
     const previousTokens = tokenize(normalizedPreviousPost);
     const exactMatch = normalizedContent === normalizedPreviousPost;
     const containmentMatch =
-        normalizedContent.includes(normalizedPreviousPost)
-        || normalizedPreviousPost.includes(normalizedContent);
+        normalizedContent.includes(normalizedPreviousPost) ||
+        normalizedPreviousPost.includes(normalizedContent);
 
     const tokenScore = jaccardSimilarity(contentTokens, previousTokens);
     const phraseScore = jaccardSimilarity(
@@ -214,10 +226,7 @@ function buildCandidate(content: string, previousPost: string): SimilarityCandid
     );
     const score = exactMatch
         ? 1
-        : Math.max(
-            containmentMatch ? 0.97 : 0,
-            tokenScore * 0.65 + phraseScore * 0.35
-        );
+        : Math.max(containmentMatch ? 0.97 : 0, tokenScore * 0.65 + phraseScore * 0.35);
 
     return {
         previousPost,
@@ -291,23 +300,6 @@ function jaccardSimilarity(left: string[], right: string[]): number {
 
     const union = new Set([...leftSet, ...rightSet]).size;
     return union === 0 ? 0 : intersection / union;
-}
-
-function extractOutputText(response: any): string {
-    if (!response?.output) {
-        throw new Error(`Unexpected AI response format: ${JSON.stringify(response)}`);
-    }
-
-    const result = response.output.find((candidate: any) =>
-        Array.isArray(candidate.content) && candidate.content.some((item: any) => item.type === 'output_text')
-    );
-
-    const textContent = result?.content?.find((item: any) => item.type === 'output_text');
-    if (!textContent?.text) {
-        throw new Error('Similarity review response did not include output_text.');
-    }
-
-    return textContent.text;
 }
 
 function parseSimilarityResponse(text: string): SimilarityReviewResponse {

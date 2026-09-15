@@ -43,22 +43,27 @@ describe('generateValidatedPost', () => {
         );
     });
 
-    it('fails after exhausting the retry budget', async () => {
+    it('falls back to the best attempt instead of throwing when all retries are exhausted', async () => {
         const generator = {
             generatePost: vi.fn().mockResolvedValue('https://bad.example/again'),
         };
 
-        await expect(
-            generateValidatedPost({
-                generator,
-                categories: ['technology'],
-                maxAttempts: 2,
-                validateUrls: vi.fn().mockResolvedValue({
-                    valid: false,
-                    invalidUrls: ['https://bad.example/again'],
-                }),
-            })
-        ).rejects.toThrow('Failed to generate a unique post with valid URLs after 2 attempts');
+        // BUG-01: Previously this test asserted .rejects.toThrow which meant the post was
+        // silently dropped. After the fix, exhaustion returns the best available attempt
+        // with a warning rather than throwing.
+        const result = await generateValidatedPost({
+            generator,
+            categories: ['technology'],
+            maxAttempts: 2,
+            validateUrls: vi.fn().mockResolvedValue({
+                valid: false,
+                invalidUrls: ['https://bad.example/again'],
+            }),
+        });
+
+        expect(result.attempts).toHaveLength(2);
+        // Best attempt is the last one (all have invalid URLs, so fallback to last).
+        expect(result.content).toBe('https://bad.example/again');
     });
 
     it('retries when the generated content is too similar to post history', async () => {
@@ -66,7 +71,9 @@ describe('generateValidatedPost', () => {
             generatePost: vi
                 .fn()
                 .mockResolvedValueOnce('Bitcoin yine 100 bin dolar seviyesine yaklasti.')
-                .mockResolvedValueOnce('Bitcoin fiyatinda hizli hareket var, ancak odak bu kez ETF hacimleri.'),
+                .mockResolvedValueOnce(
+                    'Bitcoin fiyatinda hizli hareket var, ancak odak bu kez ETF hacimleri.'
+                ),
         };
 
         const similarityChecker = {
@@ -99,7 +106,9 @@ describe('generateValidatedPost', () => {
             validateUrls,
         });
 
-        expect(result.content).toBe('Bitcoin fiyatinda hizli hareket var, ancak odak bu kez ETF hacimleri.');
+        expect(result.content).toBe(
+            'Bitcoin fiyatinda hizli hareket var, ancak odak bu kez ETF hacimleri.'
+        );
         expect(result.attempts).toHaveLength(2);
         expect(result.attempts[0].similarityMatch?.reason).toContain('Same market update');
         expect(generator.generatePost).toHaveBeenCalledTimes(2);
@@ -149,5 +158,62 @@ describe('validatePostUrls', () => {
         expect(fetchSpy).not.toHaveBeenCalled();
 
         fetchSpy.mockRestore();
+    });
+
+    it('treats a timed-out URL fetch as reachable (BUG-07)', async () => {
+        // Both HEAD and GET timeout (return null) — the URL should be considered reachable
+        // rather than causing the post to be discarded.
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network timeout'));
+
+        const result = await validatePostUrls(
+            'Check https://slow-cdn.example.com/article for details.'
+        );
+
+        expect(result.valid).toBe(true);
+        expect(result.invalidUrls).toHaveLength(0);
+
+        vi.restoreAllMocks();
+    });
+});
+
+describe('generateValidatedPost — exhaustion fallback (BUG-01)', () => {
+    it('returns the best available attempt instead of throwing when all retries fail', async () => {
+        const generator = {
+            generatePost: vi
+                .fn()
+                .mockResolvedValueOnce('First attempt with https://bad1.example.com/link')
+                .mockResolvedValueOnce('Second attempt with https://bad2.example.com/link')
+                .mockResolvedValueOnce('Third attempt, no links, slightly similar'),
+        };
+
+        const validateUrls = vi
+            .fn()
+            .mockResolvedValueOnce({ valid: false, invalidUrls: ['https://bad1.example.com/link'] })
+            .mockResolvedValueOnce({ valid: false, invalidUrls: ['https://bad2.example.com/link'] })
+            .mockResolvedValueOnce({ valid: true, invalidUrls: [] });
+
+        const similarityChecker = {
+            checkSimilarity: vi.fn().mockResolvedValue({
+                isTooSimilar: true,
+                match: {
+                    previousPost: 'Older post, no links, somewhat similar',
+                    reason: 'Same topic and angle.',
+                    score: 0.75,
+                },
+            }),
+        };
+
+        const result = await generateValidatedPost({
+            generator,
+            categories: ['technology'],
+            validateUrls,
+            similarityChecker,
+            maxAttempts: 3,
+        });
+
+        // Should not throw — should return the attempt with no invalid URLs
+        // (attempt 3) even though similarity failed.
+        expect(result.content).toBe('Third attempt, no links, slightly similar');
+        expect(result.attempts).toHaveLength(3);
     });
 });

@@ -3,17 +3,11 @@
         "target": "esnext",
         "module": "esnext",
         "moduleResolution": "bundler",
-        "lib": [
-            "esnext"
-        ],
-        "types": [
-            "@cloudflare/workers-types"
-        ],
+        "lib": ["esnext", "dom"],
+        "types": ["@cloudflare/workers-types"],
         "strict": true,
         "noEmit": true,
         "skipLibCheck": true
     },
-    "include": [
-        "src/**/*"
-    ]
+    "include": ["src/**/*"]
 }

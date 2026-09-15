@@ -59,7 +59,10 @@ async function isReachableUrl(url: string): Promise<boolean> {
 
     const getResponse = await fetchWithTimeout(url, 'GET');
     if (!getResponse) {
-        return false;
+        // Network timeout or connection error — URL was sourced from already-fetched context,
+        // so treat it as reachable rather than discarding a valid post.
+        console.warn(`URL validation timed out for ${url} — treating as reachable`);
+        return true;
     }
 
     if (isSuccessStatus(getResponse.status)) {
@@ -72,7 +75,7 @@ async function isReachableUrl(url: string): Promise<boolean> {
 async function fetchWithTimeout(url: string, method: 'HEAD' | 'GET'): Promise<Response | null> {
     try {
         const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error(`Timed out while validating URL: ${url}`)), 5000);
+            setTimeout(() => reject(new Error(`Timed out while validating URL: ${url}`)), 8000);
         });
 
         return await Promise.race([

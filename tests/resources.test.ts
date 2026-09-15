@@ -73,4 +73,99 @@ describe('ResourceService.fetchResources', () => {
         expect(context).toContain('Link: https://example.com/sehir-isiklari/');
         expect(context).not.toContain('Link: https://example.com/feed.xml');
     });
+
+    it('picks a single item from the RSS feed, not all top items (BUG-04)', async () => {
+        const service = new ResourceService();
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>Article One</title>
+      <link>https://example.com/one/</link>
+      <description>First article.</description>
+    </item>
+    <item>
+      <title>Article Two</title>
+      <link>https://example.com/two/</link>
+      <description>Second article.</description>
+    </item>
+    <item>
+      <title>Article Three</title>
+      <link>https://example.com/three/</link>
+      <description>Third article.</description>
+    </item>
+  </channel>
+</rss>`;
+
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+            new Response(xml, { status: 200, headers: { 'content-type': 'application/rss+xml' } })
+        );
+
+        const context = await service.fetchResources([
+            { type: 'rss', url: 'https://example.com/feed/' },
+        ]);
+
+        // Exactly one 'Title:' line — not three
+        const titleMatches = (context.match(/^Title:/gm) || []).length;
+        expect(titleMatches).toBe(1);
+
+        // No separator lines from the old multi-item format
+        expect(context).not.toContain('---');
+
+        vi.restoreAllMocks();
+    });
+
+    it('does not bias weighted selection toward the first resource (BUG-03)', async () => {
+        const service = new ResourceService();
+        const resources = [
+            { type: 'quote' as const, categories: ['science'], weight: 1 },
+            { type: 'quote' as const, categories: ['history'], weight: 1 },
+            { type: 'quote' as const, categories: ['philosophy'], weight: 1 },
+        ];
+
+        const categoriesSelected: string[] = [];
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+            const url: string = typeof input === 'string' ? input : input.toString();
+            const category = new URL(url).searchParams.get('tags') ?? '';
+            categoriesSelected.push(category);
+            return new Response(JSON.stringify([{ content: 'Test quote', author: 'Author' }]), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            });
+        });
+
+        // Run 60 selections; with uniform weights each category should appear ~20 times.
+        // A bias toward the first resource would cause 'science' to appear nearly every time.
+        for (let i = 0; i < 60; i++) {
+            await service.fetchResources(resources);
+        }
+
+        const scienceCount = categoriesSelected.filter((c) => c === 'science').length;
+        // Should not dominate — with fair distribution expect < 40 out of 60
+        expect(scienceCount).toBeLessThan(40);
+
+        vi.restoreAllMocks();
+    });
+
+    it('extracts the quote from an array response (BUG-10)', async () => {
+        const service = new ResourceService();
+
+        vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+            new Response(
+                JSON.stringify([
+                    { content: 'To be or not to be.', author: 'Shakespeare', _id: 'abc' },
+                ]),
+                { status: 200, headers: { 'content-type': 'application/json' } }
+            )
+        );
+
+        const context = await service.fetchResources([
+            { type: 'quote', categories: ['literature'] },
+        ]);
+
+        expect(context).toContain('To be or not to be.');
+        expect(context).toContain('Shakespeare');
+
+        vi.restoreAllMocks();
+    });
 });

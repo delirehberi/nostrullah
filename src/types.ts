@@ -20,16 +20,11 @@ export const PERSONALITY_VALUES = [
     'philosophical',
 ] as const;
 
-export type Personality = typeof PERSONALITY_VALUES[number];
+export type Personality = (typeof PERSONALITY_VALUES)[number];
 
-export const FREQUENCY_VALUES = [
-    'every_2_hours',
-    'daily',
-    'hourly',
-    'twice_a_day',
-] as const;
+export const FREQUENCY_VALUES = ['every_2_hours', 'daily', 'hourly', 'twice_a_day'] as const;
 
-export type Frequency = typeof FREQUENCY_VALUES[number];
+export type Frequency = (typeof FREQUENCY_VALUES)[number];
 
 export interface RemoveResourceMatch {
     type: Resource['type'];
@@ -77,6 +72,15 @@ export type ControlAction =
     | {
           type: 'replace_resources';
           resources: Resource[];
+      }
+    | {
+          type: 'show_resources';
+      }
+    | {
+          type: 'show_details';
+      }
+    | {
+          type: 'show_help';
       };
 
 export interface NostrAccount {

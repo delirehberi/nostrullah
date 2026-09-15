@@ -95,9 +95,7 @@ describe('runScheduled control ordering', () => {
             last_run_at: 0,
         };
 
-        getAccounts
-            .mockResolvedValueOnce([account])
-            .mockResolvedValueOnce([]);
+        getAccounts.mockResolvedValueOnce([account]).mockResolvedValueOnce([]);
         processAccounts.mockImplementation(async (accounts: any[]) => {
             accounts[0].is_active = false;
         });
@@ -110,12 +108,16 @@ describe('runScheduled control ordering', () => {
             },
         };
 
-        await runScheduled({} as any, {
-            AI: { run: vi.fn() } as any,
-            AI_MODEL: '@cf/openai/gpt-oss-120b',
-            DB: {} as any,
-            MAX_POST_LENGTH: '280',
-        } as any, ctx as any);
+        await runScheduled(
+            {} as any,
+            {
+                AI: { run: vi.fn() } as any,
+                AI_MODEL: '@cf/openai/gpt-oss-120b',
+                DB: {} as any,
+                MAX_POST_LENGTH: '280',
+            } as any,
+            ctx as any
+        );
         await Promise.all(pending);
 
         expect(processAccounts).toHaveBeenCalledTimes(1);
@@ -141,13 +143,15 @@ describe('runScheduled control ordering', () => {
             last_run_at: 0,
         };
 
-        getAccounts.mockImplementation(async (_env: unknown, options?: { includeInactive?: boolean }) => {
-            if (options?.includeInactive) {
-                return [state];
-            }
+        getAccounts.mockImplementation(
+            async (_env: unknown, options?: { includeInactive?: boolean }) => {
+                if (options?.includeInactive) {
+                    return [state];
+                }
 
-            return state.is_active ? [state] : [];
-        });
+                return state.is_active ? [state] : [];
+            }
+        );
         processAccounts.mockImplementation(async () => {
             state.prompt_template = 'updated prompt from control';
             state.data_resources = [
@@ -170,12 +174,16 @@ describe('runScheduled control ordering', () => {
             },
         };
 
-        await runScheduled({} as any, {
-            AI: { run: vi.fn() } as any,
-            AI_MODEL: '@cf/openai/gpt-oss-120b',
-            DB: {} as any,
-            MAX_POST_LENGTH: '280',
-        } as any, ctx as any);
+        await runScheduled(
+            {} as any,
+            {
+                AI: { run: vi.fn() } as any,
+                AI_MODEL: '@cf/openai/gpt-oss-120b',
+                DB: {} as any,
+                MAX_POST_LENGTH: '280',
+            } as any,
+            ctx as any
+        );
         await Promise.all(pending);
 
         expect(generateValidatedPost).toHaveBeenCalledWith(

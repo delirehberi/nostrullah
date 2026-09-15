@@ -27,13 +27,15 @@ function createAccount(overrides: Partial<NostrAccount> = {}): NostrAccount {
     };
 }
 
-function createControlEvent(overrides: Partial<{
-    id: string;
-    pubkey: string;
-    content: string;
-    created_at: number;
-    tags: string[][];
-}> = {}) {
+function createControlEvent(
+    overrides: Partial<{
+        id: string;
+        pubkey: string;
+        content: string;
+        created_at: number;
+        tags: string[][];
+    }> = {}
+) {
     return {
         id: 'event-1',
         pubkey: adminPubkey,
@@ -58,8 +60,22 @@ describe('resolveTargetAccount', () => {
             privateKey: secondaryPrivateKey,
         });
         const contextsById = new Map([
-            [1, { account: firstAccount, accountId: 1, pubkey: NostrService.getPublicKeyFromPrivate(primaryPrivateKey) }],
-            [2, { account: secondAccount, accountId: 2, pubkey: NostrService.getPublicKeyFromPrivate(secondaryPrivateKey) }],
+            [
+                1,
+                {
+                    account: firstAccount,
+                    accountId: 1,
+                    pubkey: NostrService.getPublicKeyFromPrivate(primaryPrivateKey),
+                },
+            ],
+            [
+                2,
+                {
+                    account: secondAccount,
+                    accountId: 2,
+                    pubkey: NostrService.getPublicKeyFromPrivate(secondaryPrivateKey),
+                },
+            ],
         ]);
         const contextsByPubkey = new Map([
             [NostrService.getPublicKeyFromPrivate(primaryPrivateKey), contextsById.get(1)!],
@@ -122,11 +138,20 @@ describe('resolveTargetAccount', () => {
 
         const resolution = await resolveTargetAccount(
             createControlEvent({
-                tags: [['p', firstPubkey], ['p', secondPubkey]],
+                tags: [
+                    ['p', firstPubkey],
+                    ['p', secondPubkey],
+                ],
             }) as any,
             1,
-            new Map([[1, firstContext], [2, secondContext]]) as any,
-            new Map([[firstPubkey, firstContext], [secondPubkey, secondContext]]) as any,
+            new Map([
+                [1, firstContext],
+                [2, secondContext],
+            ]) as any,
+            new Map([
+                [firstPubkey, firstContext],
+                [secondPubkey, secondContext],
+            ]) as any,
             storage
         );
 
@@ -159,20 +184,24 @@ describe('ControlProcessor', () => {
             published: true,
             successCount: 1,
         });
-        const processor = new ControlProcessor({
-            AI: { run: vi.fn() } as any,
-            AI_MODEL: '@cf/openai/gpt-oss-120b',
-            DB: {} as any,
-            MAX_POST_LENGTH: '280',
-        } as any, storage, {
-            interpreter,
-            publishEvent,
-            queryEvents: vi.fn().mockResolvedValue([
-                createControlEvent({
-                    tags: [['p', pubkey]],
-                }),
-            ]),
-        });
+        const processor = new ControlProcessor(
+            {
+                AI: { run: vi.fn() } as any,
+                AI_MODEL: '@cf/openai/gpt-oss-120b',
+                DB: {} as any,
+                MAX_POST_LENGTH: '280',
+            } as any,
+            storage,
+            {
+                interpreter,
+                publishEvent,
+                queryEvents: vi.fn().mockResolvedValue([
+                    createControlEvent({
+                        tags: [['p', pubkey]],
+                    }),
+                ]),
+            }
+        );
 
         await processor.processAccounts([account]);
 
@@ -215,21 +244,25 @@ describe('ControlProcessor', () => {
             published: true,
             successCount: 1,
         });
-        const processor = new ControlProcessor({
-            AI: { run: vi.fn() } as any,
-            AI_MODEL: '@cf/openai/gpt-oss-120b',
-            DB: {} as any,
-            MAX_POST_LENGTH: '280',
-        } as any, storage, {
-            interpreter,
-            publishEvent,
-            queryEvents: vi.fn().mockResolvedValue([
-                createControlEvent({
-                    pubkey: strangerPubkey,
-                    tags: [['p', pubkey]],
-                }),
-            ]),
-        });
+        const processor = new ControlProcessor(
+            {
+                AI: { run: vi.fn() } as any,
+                AI_MODEL: '@cf/openai/gpt-oss-120b',
+                DB: {} as any,
+                MAX_POST_LENGTH: '280',
+            } as any,
+            storage,
+            {
+                interpreter,
+                publishEvent,
+                queryEvents: vi.fn().mockResolvedValue([
+                    createControlEvent({
+                        pubkey: strangerPubkey,
+                        tags: [['p', pubkey]],
+                    }),
+                ]),
+            }
+        );
 
         await processor.processAccounts([account]);
 
@@ -254,24 +287,117 @@ describe('ControlProcessor', () => {
         const interpreter = {
             interpret: vi.fn(),
         } as any;
-        const processor = new ControlProcessor({
-            AI: { run: vi.fn() } as any,
-            AI_MODEL: '@cf/openai/gpt-oss-120b',
-            DB: {} as any,
-            MAX_POST_LENGTH: '280',
-        } as any, storage, {
-            interpreter,
-            publishEvent: vi.fn(),
-            queryEvents: vi.fn().mockResolvedValue([
-                createControlEvent({
-                    tags: [['p', NostrService.getPublicKeyFromPrivate(primaryPrivateKey)]],
-                }),
-            ]),
-        });
+        const processor = new ControlProcessor(
+            {
+                AI: { run: vi.fn() } as any,
+                AI_MODEL: '@cf/openai/gpt-oss-120b',
+                DB: {} as any,
+                MAX_POST_LENGTH: '280',
+            } as any,
+            storage,
+            {
+                interpreter,
+                publishEvent: vi.fn(),
+                queryEvents: vi.fn().mockResolvedValue([
+                    createControlEvent({
+                        tags: [['p', NostrService.getPublicKeyFromPrivate(primaryPrivateKey)]],
+                    }),
+                ]),
+            }
+        );
 
         await processor.processAccounts([account]);
 
         expect(interpreter.interpret).not.toHaveBeenCalled();
         expect(storage.recordProcessedControlEvent).not.toHaveBeenCalled();
+    });
+
+    it('processes informational query commands and replies without leaking prompt or keys', async () => {
+        const account = createAccount({
+            name: 'Test Bot',
+            prompt_template: 'Super secret prompt template',
+            data_resources: [
+                {
+                    type: 'rss',
+                    url: 'https://example.com/rss.xml',
+                    weight: 2,
+                },
+            ],
+        });
+        const pubkey = NostrService.getPublicKeyFromPrivate(primaryPrivateKey);
+        const storage = {
+            hasProcessedControlEvent: vi.fn().mockResolvedValue(false),
+            updateControlLastCheckedAt: vi.fn().mockResolvedValue(undefined),
+            updateAccountConfiguration: vi.fn().mockResolvedValue(undefined),
+            recordProcessedControlEvent: vi.fn().mockResolvedValue(undefined),
+            findAccountIdByPostEventId: vi.fn().mockResolvedValue(null),
+        } as any;
+        const interpreter = {
+            interpret: vi
+                .fn()
+                .mockResolvedValue([
+                    { type: 'show_details' },
+                    { type: 'show_resources' },
+                    { type: 'show_help' },
+                ]),
+        } as any;
+        const publishEvent = vi.fn().mockResolvedValue({
+            eventId: 'ack-query',
+            published: true,
+            successCount: 1,
+        });
+        const processor = new ControlProcessor(
+            {
+                AI: { run: vi.fn() } as any,
+                AI_MODEL: '@cf/openai/gpt-oss-120b',
+                DB: {} as any,
+                MAX_POST_LENGTH: '280',
+            } as any,
+            storage,
+            {
+                interpreter,
+                publishEvent,
+                queryEvents: vi.fn().mockResolvedValue([
+                    createControlEvent({
+                        tags: [['p', pubkey]],
+                        content: 'show your details and resources and what commands you support',
+                    }),
+                ]),
+            }
+        );
+
+        await processor.processAccounts([account]);
+
+        expect(interpreter.interpret).toHaveBeenCalledTimes(1);
+        expect(storage.updateAccountConfiguration).not.toHaveBeenCalled();
+
+        expect(publishEvent).toHaveBeenCalledTimes(1);
+        const publishedContent = publishEvent.mock.calls[0][1];
+
+        // Verify details
+        expect(publishedContent).toContain('Account details:');
+        expect(publishedContent).toContain('Name: Test Bot');
+        expect(publishedContent).toContain('Posting frequency: daily');
+        expect(publishedContent).toContain('Personality: informative');
+        expect(publishedContent).toContain('Relays: wss://relay.example');
+        // Verify prompt and keys are NOT in the published reply
+        expect(publishedContent).not.toContain('Super secret prompt template');
+        expect(publishedContent).not.toContain(primaryPrivateKey);
+
+        // Verify resources
+        expect(publishedContent).toContain('Configured resources (1):');
+        expect(publishedContent).toContain('https://example.com/rss.xml');
+
+        // Verify help
+        expect(publishedContent).toContain('Supported commands:');
+
+        // Verify event recorded as applied
+        expect(storage.recordProcessedControlEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+                eventId: 'event-1',
+                accountId: 1,
+                status: 'applied',
+            })
+        );
     });
 });
