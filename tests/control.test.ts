@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ControlProcessor, resolveTargetAccount } from '../src/control';
+import { ControlCommandInterpreter, ControlProcessor, resolveTargetAccount } from '../src/control';
 import { NostrService } from '../src/nostr';
-import { NostrAccount } from '../src/types';
+import { DEFAULT_AI_MODEL, NostrAccount } from '../src/types';
 
 const primaryPrivateKey = '1'.repeat(64);
 const secondaryPrivateKey = '2'.repeat(64);
@@ -401,3 +401,60 @@ describe('ControlProcessor', () => {
         );
     });
 });
+
+describe('ControlCommandInterpreter', () => {
+    it('falls back to DEFAULT_AI_MODEL when env.AI_MODEL is undefined', async () => {
+        const mockRun = vi.fn().mockResolvedValue({
+            response: JSON.stringify({ actions: [{ type: 'show_details' }] }),
+        });
+
+        const env = {
+            AI: { run: mockRun } as any,
+            DB: {} as any,
+        };
+
+        const interpreter = new ControlCommandInterpreter(env as any);
+        const account = createAccount();
+
+        const result = await interpreter.interpret('show details', account);
+
+        expect(result).toEqual([{ type: 'show_details' }]);
+        expect(mockRun).toHaveBeenCalledTimes(1);
+        expect(mockRun).toHaveBeenCalledWith(
+            DEFAULT_AI_MODEL,
+            expect.objectContaining({
+                instructions: expect.any(String),
+                input: expect.stringContaining('show details'),
+            })
+        );
+    });
+
+    it('uses env.AI_MODEL when explicitly configured', async () => {
+        const mockRun = vi.fn().mockResolvedValue({
+            response: JSON.stringify({ actions: [{ type: 'show_help' }] }),
+        });
+
+        const customModel = '@cf/openai/gpt-oss-120b';
+        const env = {
+            AI: { run: mockRun } as any,
+            DB: {} as any,
+            AI_MODEL: customModel,
+        };
+
+        const interpreter = new ControlCommandInterpreter(env as any);
+        const account = createAccount();
+
+        const result = await interpreter.interpret('show help', account);
+
+        expect(result).toEqual([{ type: 'show_help' }]);
+        expect(mockRun).toHaveBeenCalledTimes(1);
+        expect(mockRun).toHaveBeenCalledWith(
+            customModel,
+            expect.objectContaining({
+                instructions: expect.any(String),
+                input: expect.stringContaining('show help'),
+            })
+        );
+    });
+});
+

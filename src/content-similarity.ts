@@ -1,5 +1,5 @@
 import { Ai } from '@cloudflare/workers-types';
-import { Env } from './types';
+import { DEFAULT_AI_MODEL, Env } from './types';
 import { withRetry } from './utils';
 import { extractOutputText } from './ai';
 
@@ -66,7 +66,7 @@ export class ContentSimilarityService implements PostSimilarityChecker {
 
     constructor(env: Env) {
         this.ai = env.AI;
-        this.model = env.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct';
+        this.model = env.AI_MODEL || DEFAULT_AI_MODEL;
     }
 
     async checkSimilarity(

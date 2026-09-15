@@ -1,5 +1,5 @@
 import { Ai } from '@cloudflare/workers-types';
-import { Env, Personality } from './types';
+import { DEFAULT_AI_MODEL, Env, Personality } from './types';
 import { withRetry } from './utils';
 import { personalityTemplates } from '../prompts';
 
@@ -36,7 +36,7 @@ export class ContentGenerator {
 
     constructor(env: Env) {
         this.ai = env.AI;
-        this.model = env.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct-fp8';
+        this.model = env.AI_MODEL || DEFAULT_AI_MODEL;
         this.maxLength = parseInt(env.MAX_POST_LENGTH || '280');
     }
 

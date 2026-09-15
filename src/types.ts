@@ -100,11 +100,13 @@ export interface NostrAccount {
     control_last_checked_at?: number;
 }
 
+export const DEFAULT_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
+
 export interface Env {
     AI: Ai;
     DB: D1Database;
-    AI_MODEL: string;
-    MAX_POST_LENGTH: string;
+    AI_MODEL?: string;
+    MAX_POST_LENGTH?: string;
     FAILED_POSTS?: Queue;
 }
 

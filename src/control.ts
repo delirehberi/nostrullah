@@ -1,5 +1,5 @@
 import { Event } from 'nostr-tools';
-import { Env, NostrAccount } from './types';
+import { DEFAULT_AI_MODEL, Env, NostrAccount } from './types';
 import { extractOutputText } from './ai';
 import {
     AccountConfigPatch,
@@ -50,9 +50,11 @@ export interface ControlProcessorDependencies {
 
 export class ControlCommandInterpreter {
     private env: Env;
+    private model: string;
 
     constructor(env: Env) {
         this.env = env;
+        this.model = env.AI_MODEL || DEFAULT_AI_MODEL;
     }
 
     async interpret(
@@ -60,7 +62,7 @@ export class ControlCommandInterpreter {
         account: NostrAccount
     ): Promise<ReturnType<typeof validateInterpreterResponse>> {
         const response: any = await withRetry(() =>
-            this.env.AI.run(this.env.AI_MODEL as any, {
+            this.env.AI.run(this.model as any, {
                 instructions: buildControlSchemaPrompt(),
                 input: [
                     'Current account configuration:',
