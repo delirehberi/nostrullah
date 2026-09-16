@@ -53,7 +53,16 @@ describe('ContentSimilarityService', () => {
         expect(run).toHaveBeenCalledWith(
             '@cf/openai/gpt-oss-120b',
             expect.objectContaining({
-                input: expect.stringContaining('Previous posts to compare'),
+                messages: [
+                    {
+                        role: 'system',
+                        content: expect.any(String),
+                    },
+                    {
+                        role: 'user',
+                        content: expect.stringContaining('Previous posts to compare'),
+                    },
+                ],
             })
         );
     });

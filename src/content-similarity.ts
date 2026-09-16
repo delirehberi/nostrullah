@@ -162,28 +162,36 @@ export class ContentSimilarityService implements PostSimilarityChecker {
     ): Promise<SimilarityReviewResponse> {
         const response: any = await withRetry(() =>
             this.ai.run(this.model as any, {
-                instructions: [
-                    'You review short social posts for duplicate content.',
-                    'Mark posts as too similar when they repeat the same claim, same news item, same quote, or same takeaway, even if rewritten.',
-                    'Allow posts about the same general topic only when the angle or substance is clearly different.',
-                    'Return JSON only with keys: too_similar, matched_index, reason.',
-                ].join(' '),
-                input: [
-                    `New post:\n${content}`,
-                    '',
-                    'Previous posts to compare:',
-                    ...candidates.map((candidate, index) =>
-                        [
-                            `${index + 1}. ${candidate.previousPost}`,
-                            `Heuristic score: ${candidate.score.toFixed(2)}`,
-                            candidate.sharedTerms.length > 0
-                                ? `Shared terms: ${candidate.sharedTerms.join(', ')}`
-                                : 'Shared terms: none',
-                        ].join('\n')
-                    ),
-                    '',
-                    'Respond as JSON only. Use matched_index=null if none are too similar.',
-                ].join('\n'),
+                messages: [
+                    {
+                        role: 'system',
+                        content: [
+                            'You review short social posts for duplicate content.',
+                            'Mark posts as too similar when they repeat the same claim, same news item, same quote, or same takeaway, even if rewritten.',
+                            'Allow posts about the same general topic only when the angle or substance is clearly different.',
+                            'Return JSON only with keys: too_similar, matched_index, reason.',
+                        ].join(' '),
+                    },
+                    {
+                        role: 'user',
+                        content: [
+                            `New post:\n${content}`,
+                            '',
+                            'Previous posts to compare:',
+                            ...candidates.map((candidate, index) =>
+                                [
+                                    `${index + 1}. ${candidate.previousPost}`,
+                                    `Heuristic score: ${candidate.score.toFixed(2)}`,
+                                    candidate.sharedTerms.length > 0
+                                        ? `Shared terms: ${candidate.sharedTerms.join(', ')}`
+                                        : 'Shared terms: none',
+                                ].join('\n')
+                            ),
+                            '',
+                            'Respond as JSON only. Use matched_index=null if none are too similar.',
+                        ].join('\n'),
+                    },
+                ],
             })
         );
 

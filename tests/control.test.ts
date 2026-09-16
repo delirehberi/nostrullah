@@ -423,8 +423,16 @@ describe('ControlCommandInterpreter', () => {
         expect(mockRun).toHaveBeenCalledWith(
             DEFAULT_AI_MODEL,
             expect.objectContaining({
-                instructions: expect.any(String),
-                input: expect.stringContaining('show details'),
+                messages: [
+                    {
+                        role: 'system',
+                        content: expect.any(String),
+                    },
+                    {
+                        role: 'user',
+                        content: expect.stringContaining('show details'),
+                    },
+                ],
             })
         );
     });
@@ -451,8 +459,16 @@ describe('ControlCommandInterpreter', () => {
         expect(mockRun).toHaveBeenCalledWith(
             customModel,
             expect.objectContaining({
-                instructions: expect.any(String),
-                input: expect.stringContaining('show help'),
+                messages: [
+                    {
+                        role: 'system',
+                        content: expect.any(String),
+                    },
+                    {
+                        role: 'user',
+                        content: expect.stringContaining('show help'),
+                    },
+                ],
             })
         );
     });

@@ -63,29 +63,37 @@ export class ControlCommandInterpreter {
     ): Promise<ReturnType<typeof validateInterpreterResponse>> {
         const response: any = await withRetry(() =>
             this.env.AI.run(this.model as any, {
-                instructions: buildControlSchemaPrompt(),
-                input: [
-                    'Current account configuration:',
-                    JSON.stringify(
-                        {
-                            name: account.name || null,
-                            relays: account.relays,
-                            categories: account.categories,
-                            frequency: account.frequency,
-                            data_resources: account.data_resources || [],
-                            prompt_template: account.prompt_template || null,
-                            personality: account.personality || null,
-                            is_active: Boolean(account.is_active),
-                        },
-                        null,
-                        2
-                    ),
-                    '',
-                    'Admin note:',
-                    noteContent,
-                    '',
-                    'Return JSON only.',
-                ].join('\n'),
+                messages: [
+                    {
+                        role: 'system',
+                        content: buildControlSchemaPrompt(),
+                    },
+                    {
+                        role: 'user',
+                        content: [
+                            'Current account configuration:',
+                            JSON.stringify(
+                                {
+                                    name: account.name || null,
+                                    relays: account.relays,
+                                    categories: account.categories,
+                                    frequency: account.frequency,
+                                    data_resources: account.data_resources || [],
+                                    prompt_template: account.prompt_template || null,
+                                    personality: account.personality || null,
+                                    is_active: Boolean(account.is_active),
+                                },
+                                null,
+                                2
+                            ),
+                            '',
+                            'Admin note:',
+                            noteContent,
+                            '',
+                            'Return JSON only.',
+                        ].join('\n'),
+                    },
+                ],
             })
         );
 
