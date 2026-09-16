@@ -24,7 +24,8 @@ export type Personality = (typeof PERSONALITY_VALUES)[number];
 
 export const FREQUENCY_VALUES = ['every_2_hours', 'daily', 'hourly', 'twice_a_day'] as const;
 
-export type Frequency = (typeof FREQUENCY_VALUES)[number];
+export type FrequencyPreset = (typeof FREQUENCY_VALUES)[number];
+export type Frequency = FrequencyPreset | (string & {});
 
 export interface RemoveResourceMatch {
     type: Resource['type'];
@@ -51,7 +52,7 @@ export type ControlAction =
       }
     | {
           type: 'set_frequency';
-          frequency: Frequency;
+          frequency: string;
       }
     | {
           type: 'set_relays';

@@ -1,7 +1,6 @@
 import { Env } from './types';
-import { add } from 'date-fns';
 import { AccountConfigPatch } from './control-actions';
-import cronParser from 'cron-parser';
+import { SchedulerService } from './scheduler';
 
 export interface ProcessedControlEventRecord {
     eventId: string;
@@ -36,58 +35,16 @@ export class StorageService {
             .run();
     }
 
-    shouldRun(lastRun: number, frequency: string): boolean {
-        return Date.now() >= this.getNextRunTimestamp(lastRun, frequency);
+    shouldRun(lastRun: number, frequency: string, now: Date = new Date()): boolean {
+        return SchedulerService.isDue(lastRun, frequency, now);
     }
 
-    getNextRunTimestamp(lastRun: number, frequency: string): number {
-        const normalizedLastRun = this.normalizeLastRunTimestamp(lastRun);
-        const lastRunDate = new Date(normalizedLastRun * 1000);
-
-        try {
-            // Check if it's a valid cron expression
-            const interval = cronParser.parseExpression(frequency, {
-                currentDate: lastRunDate,
-            });
-            return interval.next().toDate().getTime();
-        } catch (e) {
-            // Not a valid cron expression, fallback to predefined intervals
-        }
-
-        let nextRunDate: Date;
-
-        switch (frequency) {
-            case 'every_2_hours':
-                nextRunDate = add(lastRunDate, { hours: 2 });
-                break;
-            case 'daily':
-                nextRunDate = add(lastRunDate, { days: 1 });
-                break;
-            case 'hourly':
-                nextRunDate = add(lastRunDate, { hours: 1 });
-                break;
-            case 'twice_a_day':
-                nextRunDate = add(lastRunDate, { hours: 12 });
-                break;
-            default:
-                nextRunDate = add(lastRunDate, { hours: 1 });
-                break;
-        }
-
-        return nextRunDate.getTime();
+    getNextRunTimestamp(lastRun: number, frequency: string, now: Date = new Date()): number {
+        return SchedulerService.getNextRunTimestamp(lastRun, frequency, now);
     }
 
-    private normalizeLastRunTimestamp(lastRun: number): number {
-        if (!Number.isFinite(lastRun) || lastRun <= 0) {
-            return 0;
-        }
-
-        // Older rows stored milliseconds, while current writes use seconds.
-        if (lastRun > 10_000_000_000) {
-            return Math.floor(lastRun / 1000);
-        }
-
-        return lastRun;
+    normalizeLastRunTimestamp(lastRun: number): number {
+        return SchedulerService.normalizeLastRunTimestamp(lastRun);
     }
 
     async getPostHistory(

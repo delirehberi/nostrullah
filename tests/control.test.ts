@@ -473,4 +473,3 @@ describe('ControlCommandInterpreter', () => {
         );
     });
 });
-

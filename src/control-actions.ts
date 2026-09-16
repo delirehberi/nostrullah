@@ -9,6 +9,7 @@ import {
     RemoveResourceMatch,
     Resource,
 } from './types';
+import { SchedulerService } from './scheduler';
 
 export interface AccountConfigPatch {
     name?: string;
@@ -115,7 +116,13 @@ const controlActionSchema = z.discriminatedUnion('type', [
     z
         .object({
             type: z.literal('set_frequency'),
-            frequency: z.enum(FREQUENCY_VALUES),
+            frequency: z
+                .string()
+                .trim()
+                .refine((val) => SchedulerService.isValidFrequency(val), {
+                    message:
+                        'Must be a supported frequency preset (hourly, every_2_hours, twice_a_day, daily) or a valid cron expression',
+                }),
         })
         .strict(),
     z
@@ -335,8 +342,8 @@ export function applyControlActions(
     };
 }
 
-export function isSupportedFrequency(value: string): value is Frequency {
-    return (FREQUENCY_VALUES as readonly string[]).includes(value);
+export function isSupportedFrequency(value: string): boolean {
+    return SchedulerService.isValidFrequency(value);
 }
 
 export function buildControlSchemaPrompt(): string {
@@ -348,7 +355,7 @@ export function buildControlSchemaPrompt(): string {
         'Use {"type":"show_details"} when the admin asks for account details, settings, status, schedule/frequency, tone, or relays.',
         'Use {"type":"show_help"} when the admin asks what commands are supported, available commands, or help.',
         'Never output private_key, id, created_at, last_run_at, control fields, or any code-change instructions.',
-        'Use exact frequency values only: hourly, every_2_hours, twice_a_day, daily.',
+        'Use frequency presets (hourly, every_2_hours, twice_a_day, daily) or standard 5-part cron expressions (e.g. 0 9,21 * * *).',
         `Use exact personality values only: ${PERSONALITY_VALUES.join(', ')}.`,
         'For add_resource and replace_resources, use resource.type values rss, scraping, or quote.',
         'For rss/scraping resources include a full http/https url. For quote resources include categories.',
@@ -439,7 +446,7 @@ function extractJsonObject(text: string): string {
     return trimmed.slice(firstBrace, lastBrace + 1);
 }
 
-function formatFrequency(frequency: Frequency): string {
+function formatFrequency(frequency: string): string {
     return frequency.replace(/_/g, ' ');
 }
 
