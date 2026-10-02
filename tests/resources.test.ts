@@ -252,6 +252,111 @@ describe('ResourceService.fetchResources', () => {
     });
 });
 
+describe('ResourceService resource fallback', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    const rssXml = (title: string, link: string): string => `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>${title}</title>
+      <link>${link}</link>
+      <description>Body.</description>
+    </item>
+  </channel>
+</rss>`;
+
+    function mockFeeds(feeds: Record<string, () => Response>): string[] {
+        const requested: string[] = [];
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+            const url: string = typeof input === 'string' ? input : input.toString();
+            requested.push(url);
+            const handler = feeds[url];
+            if (!handler) throw new Error(`unexpected fetch ${url}`);
+            return handler();
+        });
+        return requested;
+    }
+
+    it('falls back to another resource when the selected one fails', async () => {
+        mockFeeds({
+            'https://broken.example/feed': () => new Response('down', { status: 503 }),
+            'https://good.example/feed': () =>
+                new Response(rssXml('Good Story', 'https://good.example/story/'), {
+                    status: 200,
+                }),
+        });
+        const service = new ResourceService();
+
+        for (let i = 0; i < 10; i++) {
+            const result = await service.fetchResources([
+                { type: 'rss', url: 'https://broken.example/feed' },
+                { type: 'rss', url: 'https://good.example/feed' },
+            ]);
+            expect(result.sourceUrl).toBe('https://good.example/story/');
+        }
+    });
+
+    it('falls back when the selected feed has nothing new', async () => {
+        mockFeeds({
+            'https://old.example/feed': () =>
+                new Response(rssXml('Old Story', 'https://old.example/story/'), { status: 200 }),
+            'https://new.example/feed': () =>
+                new Response(rssXml('New Story', 'https://new.example/story/'), { status: 200 }),
+        });
+        const service = new ResourceService();
+
+        for (let i = 0; i < 10; i++) {
+            const result = await service.fetchResources(
+                [
+                    { type: 'rss', url: 'https://old.example/feed', weight: 10 },
+                    { type: 'rss', url: 'https://new.example/feed' },
+                ],
+                { excludeUrls: new Set(['https://old.example/story/']) }
+            );
+            expect(result.context).toContain('Title: New Story');
+        }
+    });
+
+    it('returns empty context when every resource fails, trying at most three', async () => {
+        const requested = mockFeeds(
+            Object.fromEntries(
+                [1, 2, 3, 4, 5].map((n) => [
+                    `https://down${n}.example/feed`,
+                    () => new Response('down', { status: 500 }),
+                ])
+            )
+        );
+        const service = new ResourceService();
+
+        const result = await service.fetchResources(
+            [1, 2, 3, 4, 5].map((n) => ({
+                type: 'rss' as const,
+                url: `https://down${n}.example/feed`,
+            }))
+        );
+
+        expect(result).toEqual({ context: '' });
+        expect(requested).toHaveLength(3);
+        expect(new Set(requested).size).toBe(3);
+    });
+
+    it('requests a random quote without tags when no categories are set', async () => {
+        const requested = mockFeeds({
+            'https://api.quotable.io/quotes/random': () =>
+                new Response(JSON.stringify([{ content: 'Hi.', author: 'A' }]), { status: 200 }),
+        });
+        const service = new ResourceService();
+
+        const result = await service.fetchResources([{ type: 'quote', categories: [] }]);
+
+        expect(requested).toEqual(['https://api.quotable.io/quotes/random']);
+        expect(result.context).toBe('"Hi." - A');
+    });
+});
+
 describe('normalizeSharedUrl', () => {
     it('trims whitespace and drops the fragment', () => {
         expect(normalizeSharedUrl('  https://example.com/a?x=1#top ')).toBe(

@@ -31,7 +31,7 @@ This project is a headless Nostr bot running on Cloudflare Workers.
 3. Each account is processed in `ctx.waitUntil(...)`.
 4. The worker checks whether the account should run now using `StorageService.shouldRun()`.
 5. The worker loads recent post history from `post_history`.
-6. The worker optionally fetches one weighted external resource. RSS items already listed in `shared_items` are skipped.
+6. The worker optionally fetches external resource context. Resources are tried in weighted-random order (up to 3) until one returns usable content; RSS items already listed in `shared_items` are skipped. If none succeed, the post is generated without resource context.
 7. `ContentGenerator` builds the prompt and calls Cloudflare AI.
 8. `NostrService` signs and publishes the generated post to all configured relays.
 9. On success, `last_run_at`, `post_history` and (for RSS-based posts) `shared_items` are updated in D1.
@@ -60,7 +60,7 @@ This project is a headless Nostr bot running on Cloudflare Workers.
     - Contains posting-frequency logic.
 
 - `src/resources.ts`
-    - Performs weighted resource selection.
+    - Performs weighted resource selection with fallback to the next resource on failure or no new content.
     - Supports `rss`, `scraping`, and `quote` resources.
 
 - `src/types.ts`

@@ -2,6 +2,9 @@ import { XMLParser } from 'fast-xml-parser';
 import { FetchResourcesOptions, Resource, ResourceContext } from './types';
 
 const RSS_CANDIDATE_LIMIT = 10;
+// Upper bound on resources tried per run, to stay within Worker time limits.
+const MAX_RESOURCE_ATTEMPTS = 3;
+const FETCH_TIMEOUT_MS = 10_000;
 
 /**
  * Normalizes an item URL for shared-item comparisons: trims it and drops the
@@ -29,9 +32,11 @@ export class ResourceService {
     }
 
     /**
-     * Picks one resource by weight and builds prompt context from it. RSS items whose
-     * links are in `options.excludeUrls` are skipped; when every item was already
-     * shared, the returned context is empty.
+     * Builds prompt context from the account's resources. Resources are tried in
+     * weighted-random order (at most `MAX_RESOURCE_ATTEMPTS`) until one returns
+     * usable context; a resource that fails or has nothing new (e.g. every RSS item
+     * is in `options.excludeUrls`) falls through to the next. Returns an empty
+     * context when none succeed.
      */
     async fetchResources(
         resources: Resource[],
@@ -41,38 +46,68 @@ export class ResourceService {
             return { context: '' };
         }
 
-        // 1. Weighted Selection
-        const selectedResource = this.selectResource(resources);
-        if (!selectedResource) {
-            return { context: '' };
+        const excludeUrls = options.excludeUrls || new Set<string>();
+        const candidates = this.orderByWeight(resources).slice(0, MAX_RESOURCE_ATTEMPTS);
+
+        for (const resource of candidates) {
+            const label = this.describeResource(resource);
+            try {
+                const result = await this.fetchResource(resource, excludeUrls);
+                if (result.context.trim()) {
+                    console.log(`Using resource ${label}`);
+                    return result;
+                }
+                console.log(`Resource ${label} returned nothing new, trying next`);
+            } catch (error) {
+                console.error(`Failed to fetch resource ${label}:`, error);
+            }
         }
 
-        console.log(`Selected resource type: ${selectedResource.type}`);
-
-        // 2. Fetch and Parse
-        try {
-            if (selectedResource.type === 'rss') {
-                return await this.fetchAndParseRSS(
-                    selectedResource.url,
-                    options.excludeUrls || new Set()
-                );
-            }
-            if (selectedResource.type === 'scraping') {
-                return { context: await this.fetchAndParseScraping(selectedResource.url) };
-            }
-            if (selectedResource.type === 'quote') {
-                return { context: await this.fetchQuote(selectedResource.categories) };
-            }
-        } catch (error) {
-            console.error(`Failed to fetch resource:`, error);
-        }
-
+        console.warn(
+            `All ${candidates.length} attempted resources failed or had nothing new; ` +
+                'generating without resource context'
+        );
         return { context: '' };
     }
 
-    private selectResource(resources: Resource[]): Resource | null {
-        if (resources.length === 0) return null;
+    private async fetchResource(
+        resource: Resource,
+        excludeUrls: Set<string>
+    ): Promise<ResourceContext> {
+        switch (resource.type) {
+            case 'rss':
+                return this.fetchAndParseRSS(resource.url, excludeUrls);
+            case 'scraping':
+                return { context: await this.fetchAndParseScraping(resource.url) };
+            case 'quote':
+                return { context: await this.fetchQuote(resource.categories) };
+        }
+    }
 
+    private describeResource(resource: Resource): string {
+        return resource.type === 'quote'
+            ? `quote(${resource.categories.join(',')})`
+            : `${resource.type}(${resource.url})`;
+    }
+
+    /**
+     * Returns the resources in weighted-random order: repeatedly draws one by weight
+     * from those not yet drawn.
+     */
+    private orderByWeight(resources: Resource[]): Resource[] {
+        const remaining = [...resources];
+        const ordered: Resource[] = [];
+
+        while (remaining.length > 0) {
+            const selected = this.selectResource(remaining);
+            ordered.push(selected);
+            remaining.splice(remaining.indexOf(selected), 1);
+        }
+
+        return ordered;
+    }
+
+    private selectResource(resources: Resource[]): Resource {
         const totalWeight = resources.reduce((sum, r) => sum + (r.weight || 1), 0);
         let random = Math.random() * totalWeight;
 
@@ -88,8 +123,13 @@ export class ResourceService {
     }
 
     private async fetchQuote(categories: string[]): Promise<string> {
-        const category = categories[Math.floor(Math.random() * categories.length)];
-        const response = await fetch(`https://api.quotable.io/quotes/random?tags=${category}`);
+        const url = new URL('https://api.quotable.io/quotes/random');
+        if (categories.length > 0) {
+            url.searchParams.set('tags', categories[Math.floor(Math.random() * categories.length)]);
+        }
+        const response = await fetch(url.toString(), {
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -107,6 +147,7 @@ export class ResourceService {
                 'User-Agent': 'NostrBot/1.0 (Scraper)',
                 Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             },
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
 
         if (!response.ok) {
@@ -148,6 +189,7 @@ export class ResourceService {
             headers: {
                 'User-Agent': 'NostrBot/1.0',
             },
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         });
 
         if (!response.ok) {
