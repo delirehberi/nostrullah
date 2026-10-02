@@ -7,6 +7,8 @@ const getPostHistory = vi.fn();
 const updateLastRun = vi.fn();
 const addPostToHistory = vi.fn();
 const fetchResources = vi.fn();
+const getSharedUrls = vi.fn();
+const recordSharedItem = vi.fn();
 const generateValidatedPost = vi.fn();
 const publishEvent = vi.fn();
 
@@ -28,6 +30,8 @@ vi.mock('../src/storage', () => ({
         getPostHistory = getPostHistory;
         updateLastRun = updateLastRun;
         addPostToHistory = addPostToHistory;
+        getSharedUrls = getSharedUrls;
+        recordSharedItem = recordSharedItem;
     },
 }));
 
@@ -64,12 +68,19 @@ describe('runScheduled control ordering', () => {
         updateLastRun.mockReset();
         addPostToHistory.mockReset();
         fetchResources.mockReset();
+        getSharedUrls.mockReset();
+        recordSharedItem.mockReset();
         generateValidatedPost.mockReset();
         publishEvent.mockReset();
 
         shouldRun.mockReturnValue(true);
         getPostHistory.mockResolvedValue([]);
-        fetchResources.mockResolvedValue('updated rss context');
+        getSharedUrls.mockResolvedValue(new Set(['https://example.com/old/']));
+        fetchResources.mockResolvedValue({
+            context: 'updated rss context',
+            sourceUrl: 'https://example.com/new/',
+            sourceTitle: 'New Article',
+        });
         publishEvent.mockResolvedValue({
             eventId: 'post-1',
             published: true,
@@ -194,5 +205,9 @@ describe('runScheduled control ordering', () => {
         );
         expect(updateLastRun).toHaveBeenCalledWith(2);
         expect(addPostToHistory).toHaveBeenCalledWith(2, 'fresh generated post', 'post-1');
+        expect(fetchResources).toHaveBeenCalledWith(state.data_resources, {
+            excludeUrls: new Set(['https://example.com/old/']),
+        });
+        expect(recordSharedItem).toHaveBeenCalledWith(2, 'https://example.com/new/', 'New Article');
     });
 });

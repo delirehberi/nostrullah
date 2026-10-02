@@ -1,5 +1,22 @@
 import { XMLParser } from 'fast-xml-parser';
-import { Resource } from './types';
+import { FetchResourcesOptions, Resource, ResourceContext } from './types';
+
+const RSS_CANDIDATE_LIMIT = 10;
+
+/**
+ * Normalizes an item URL for shared-item comparisons: trims it and drops the
+ * fragment, so `https://a.com/x#top` and `https://a.com/x` count as the same item.
+ */
+export function normalizeSharedUrl(url: string): string {
+    const trimmed = url.trim();
+    try {
+        const parsed = new URL(trimmed);
+        parsed.hash = '';
+        return parsed.toString();
+    } catch {
+        return trimmed;
+    }
+}
 
 export class ResourceService {
     private parser: XMLParser;
@@ -11,15 +28,23 @@ export class ResourceService {
         });
     }
 
-    async fetchResources(resources: Resource[]): Promise<string> {
+    /**
+     * Picks one resource by weight and builds prompt context from it. RSS items whose
+     * links are in `options.excludeUrls` are skipped; when every item was already
+     * shared, the returned context is empty.
+     */
+    async fetchResources(
+        resources: Resource[],
+        options: FetchResourcesOptions = {}
+    ): Promise<ResourceContext> {
         if (!resources || resources.length === 0) {
-            return '';
+            return { context: '' };
         }
 
         // 1. Weighted Selection
         const selectedResource = this.selectResource(resources);
         if (!selectedResource) {
-            return '';
+            return { context: '' };
         }
 
         console.log(`Selected resource type: ${selectedResource.type}`);
@@ -27,19 +52,22 @@ export class ResourceService {
         // 2. Fetch and Parse
         try {
             if (selectedResource.type === 'rss') {
-                return await this.fetchAndParseRSS(selectedResource.url);
+                return await this.fetchAndParseRSS(
+                    selectedResource.url,
+                    options.excludeUrls || new Set()
+                );
             }
             if (selectedResource.type === 'scraping') {
-                return await this.fetchAndParseScraping(selectedResource.url);
+                return { context: await this.fetchAndParseScraping(selectedResource.url) };
             }
             if (selectedResource.type === 'quote') {
-                return await this.fetchQuote(selectedResource.categories);
+                return { context: await this.fetchQuote(selectedResource.categories) };
             }
         } catch (error) {
             console.error(`Failed to fetch resource:`, error);
         }
 
-        return '';
+        return { context: '' };
     }
 
     private selectResource(resources: Resource[]): Resource | null {
@@ -112,7 +140,10 @@ export class ResourceService {
             .slice(0, 5000);
     }
 
-    private async fetchAndParseRSS(url: string): Promise<string> {
+    private async fetchAndParseRSS(
+        url: string,
+        excludeUrls: Set<string>
+    ): Promise<ResourceContext> {
         const response = await fetch(url, {
             headers: {
                 'User-Agent': 'NostrBot/1.0',
@@ -136,15 +167,20 @@ export class ResourceService {
             items = Array.isArray(jsonObj.feed.entry) ? jsonObj.feed.entry : [jsonObj.feed.entry];
         }
 
-        // Pick one random item from the top 10 so each run uses a different article.
-        const candidateItems = items.slice(0, 10);
+        // Pick one random not-yet-shared item from the top 10 so each run uses a new article.
+        const candidateItems = items
+            .slice(0, RSS_CANDIDATE_LIMIT)
+            .map((item) => ({ item, link: this.extractItemLink(item) }))
+            .filter(({ link }) => !link || !excludeUrls.has(normalizeSharedUrl(link)));
         if (candidateItems.length === 0) {
-            return '';
+            if (items.length > 0) {
+                console.log(`No unshared items left in feed ${url}`);
+            }
+            return { context: '' };
         }
 
-        const item = candidateItems[Math.floor(Math.random() * candidateItems.length)];
+        const { item, link } = candidateItems[Math.floor(Math.random() * candidateItems.length)];
         const title = this.extractTextValue(item.title) || 'Untitled';
-        const link = this.extractItemLink(item);
         const desc = this.extractTextValue(
             item.description || item.summary || item['content:encoded'] || ''
         );
@@ -154,7 +190,11 @@ export class ResourceService {
         if (cleanDesc) output += `Summary: ${cleanDesc.slice(0, 300)}...\n`;
         if (link) output += `Link: ${link}\n`;
 
-        return output;
+        return {
+            context: output,
+            sourceUrl: link ? normalizeSharedUrl(link) : undefined,
+            sourceTitle: title,
+        };
     }
 
     private extractItemLink(item: any): string | undefined {

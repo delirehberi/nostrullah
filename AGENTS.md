@@ -31,10 +31,10 @@ This project is a headless Nostr bot running on Cloudflare Workers.
 3. Each account is processed in `ctx.waitUntil(...)`.
 4. The worker checks whether the account should run now using `StorageService.shouldRun()`.
 5. The worker loads recent post history from `post_history`.
-6. The worker optionally fetches one weighted external resource.
+6. The worker optionally fetches one weighted external resource. RSS items already listed in `shared_items` are skipped.
 7. `ContentGenerator` builds the prompt and calls Cloudflare AI.
 8. `NostrService` signs and publishes the generated post to all configured relays.
-9. On success, `last_run_at` and `post_history` are updated in D1.
+9. On success, `last_run_at`, `post_history` and (for RSS-based posts) `shared_items` are updated in D1.
 
 ## Repository Map
 
@@ -56,7 +56,7 @@ This project is a headless Nostr bot running on Cloudflare Workers.
     - Supports both `nsec` and hex private keys.
 
 - `src/storage.ts`
-    - Handles D1 reads/writes for `last_run_at` and `post_history`.
+    - Handles D1 reads/writes for `last_run_at`, `post_history` and `shared_items`.
     - Contains posting-frequency logic.
 
 - `src/resources.ts`
@@ -138,6 +138,14 @@ The worker currently depends on these D1 tables:
 - `account_id`
 - `content`
 - `created_at`
+
+### `shared_items`
+
+- `id`
+- `account_id`
+- `url` (normalized item link, unique per account)
+- `title`
+- `created_at` (unix seconds; rows older than 90 days are pruned)
 
 If a change affects account shape or persistence, review:
 

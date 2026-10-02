@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ResourceService } from '../src/resources';
+import { normalizeSharedUrl, ResourceService } from '../src/resources';
 
 describe('ResourceService.fetchResources', () => {
     afterEach(() => {
@@ -29,7 +29,7 @@ describe('ResourceService.fetchResources', () => {
             })
         );
 
-        const context = await service.fetchResources([
+        const { context } = await service.fetchResources([
             {
                 type: 'rss',
                 url: feedUrl,
@@ -62,7 +62,7 @@ describe('ResourceService.fetchResources', () => {
             })
         );
 
-        const context = await service.fetchResources([
+        const { context } = await service.fetchResources([
             {
                 type: 'rss',
                 url: 'https://example.com/feed.xml',
@@ -101,7 +101,7 @@ describe('ResourceService.fetchResources', () => {
             new Response(xml, { status: 200, headers: { 'content-type': 'application/rss+xml' } })
         );
 
-        const context = await service.fetchResources([
+        const { context } = await service.fetchResources([
             { type: 'rss', url: 'https://example.com/feed/' },
         ]);
 
@@ -159,7 +159,7 @@ describe('ResourceService.fetchResources', () => {
             )
         );
 
-        const context = await service.fetchResources([
+        const { context } = await service.fetchResources([
             { type: 'quote', categories: ['literature'] },
         ]);
 
@@ -167,5 +167,99 @@ describe('ResourceService.fetchResources', () => {
         expect(context).toContain('Shakespeare');
 
         vi.restoreAllMocks();
+    });
+
+    describe('shared item tracking', () => {
+        const feedXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>Article One</title>
+      <link>https://example.com/one/</link>
+      <description>First article.</description>
+    </item>
+    <item>
+      <title>Article Two</title>
+      <link>https://example.com/two/#comments</link>
+      <description>Second article.</description>
+    </item>
+    <item>
+      <title>Article Three</title>
+      <link>https://example.com/three/</link>
+      <description>Third article.</description>
+    </item>
+  </channel>
+</rss>`;
+
+        function mockFeed(): void {
+            vi.spyOn(globalThis, 'fetch').mockImplementation(
+                async () =>
+                    new Response(feedXml, {
+                        status: 200,
+                        headers: { 'content-type': 'application/rss+xml' },
+                    })
+            );
+        }
+
+        it('returns the normalized source url and title of the chosen item', async () => {
+            mockFeed();
+            const service = new ResourceService();
+
+            const result = await service.fetchResources([
+                { type: 'rss', url: 'https://example.com/feed/' },
+            ]);
+
+            expect(result.sourceUrl).toMatch(/^https:\/\/example\.com\/(one|two|three)\/$/);
+            expect(result.sourceTitle).toMatch(/^Article (One|Two|Three)$/);
+            expect(result.context).toContain(`Title: ${result.sourceTitle}`);
+        });
+
+        it('never offers an item that was already shared', async () => {
+            mockFeed();
+            const service = new ResourceService();
+            const excludeUrls = new Set([
+                'https://example.com/one/',
+                normalizeSharedUrl('https://example.com/two/#comments'),
+            ]);
+
+            for (let i = 0; i < 20; i++) {
+                const result = await service.fetchResources(
+                    [{ type: 'rss', url: 'https://example.com/feed/' }],
+                    { excludeUrls }
+                );
+                expect(result.sourceUrl).toBe('https://example.com/three/');
+                expect(result.context).toContain('Title: Article Three');
+            }
+        });
+
+        it('returns empty context when every feed item was already shared', async () => {
+            mockFeed();
+            const service = new ResourceService();
+
+            const result = await service.fetchResources(
+                [{ type: 'rss', url: 'https://example.com/feed/' }],
+                {
+                    excludeUrls: new Set([
+                        'https://example.com/one/',
+                        'https://example.com/two/',
+                        'https://example.com/three/',
+                    ]),
+                }
+            );
+
+            expect(result).toEqual({ context: '' });
+        });
+    });
+});
+
+describe('normalizeSharedUrl', () => {
+    it('trims whitespace and drops the fragment', () => {
+        expect(normalizeSharedUrl('  https://example.com/a?x=1#top ')).toBe(
+            'https://example.com/a?x=1'
+        );
+    });
+
+    it('returns non-url input trimmed', () => {
+        expect(normalizeSharedUrl(' not a url ')).toBe('not a url');
     });
 });

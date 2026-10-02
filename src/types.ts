@@ -12,6 +12,22 @@ export type Resource =
           weight?: number; // Default to 1
       };
 
+/**
+ * Prompt context produced from an account resource. `sourceUrl` identifies the
+ * item (e.g. an RSS article) the context was built from, so it can be recorded
+ * as shared after a successful publish.
+ */
+export interface ResourceContext {
+    context: string;
+    sourceUrl?: string;
+    sourceTitle?: string;
+}
+
+export interface FetchResourcesOptions {
+    /** Normalized item URLs already shared by the account; these are skipped. */
+    excludeUrls?: Set<string>;
+}
+
 export const PERSONALITY_VALUES = [
     'informative',
     'humorous',

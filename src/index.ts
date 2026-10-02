@@ -1,5 +1,5 @@
 import { ScheduledEvent, ExecutionContext, MessageBatch, Queue } from '@cloudflare/workers-types';
-import { Env } from './types';
+import { Env, ResourceContext } from './types';
 import { getAccounts } from './config';
 import { ContentGenerator } from './ai';
 import { NostrService } from './nostr';
@@ -55,7 +55,7 @@ export async function runScheduled(
 export default {
     async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext): Promise<void> {
         for (const message of batch.messages) {
-            const { account, content, targetRelays } = message.body;
+            const { account, content, targetRelays, sourceUrl, sourceTitle } = message.body;
             try {
                 const publishResult = await NostrService.publishEvent(
                     { ...account, relays: targetRelays },
@@ -65,9 +65,13 @@ export default {
                     console.log(
                         `Successfully published retried post for ${account.name || 'Unknown'}`
                     );
-                    const storage = new StorageService(env);
-                    await storage.updateLastRun(account.id);
-                    await storage.addPostToHistory(account.id, content, publishResult.eventId);
+                    await recordSuccessfulPost(
+                        new StorageService(env),
+                        account.id,
+                        content,
+                        publishResult.eventId,
+                        { context: '', sourceUrl, sourceTitle }
+                    );
                     message.ack();
                 } else {
                     console.error(`Retry failed for ${account.name || 'Unknown'}`);
@@ -105,10 +109,13 @@ export default {
                 const history = await storage.getPostHistory(account.id, SIMILARITY_HISTORY_LIMIT);
                 const promptHistory = history.slice(0, PROMPT_HISTORY_LIMIT);
 
-                let context = '';
+                let resourceContext: ResourceContext = { context: '' };
                 if (account.data_resources && account.data_resources.length > 0) {
-                    context = await resourceService.fetchResources(account.data_resources);
+                    resourceContext = await resourceService.fetchResources(account.data_resources, {
+                        excludeUrls: await storage.getSharedUrls(account.id),
+                    });
                 }
+                const context = resourceContext.context;
 
                 const generatedPost = await generateValidatedPost({
                     generator,
@@ -129,6 +136,7 @@ export default {
                     categories: account.categories,
                     last_run: account.last_run_at,
                     context_used: !!context,
+                    source_url: resourceContext.sourceUrl,
                     account_details: {
                         prompt: account.prompt_template,
                         resources: account.data_resources,
@@ -187,11 +195,14 @@ async function processScheduledAccount(options: {
         const history = await storage.getPostHistory(account.id, SIMILARITY_HISTORY_LIMIT);
         const promptHistory = history.slice(0, PROMPT_HISTORY_LIMIT);
 
-        let context = '';
+        let resourceContext: ResourceContext = { context: '' };
         if (account.data_resources && account.data_resources.length > 0) {
             console.log(`Fetching resources for ${pubKey.slice(0, 8)}...`);
-            context = await resourceService.fetchResources(account.data_resources);
+            resourceContext = await resourceService.fetchResources(account.data_resources, {
+                excludeUrls: await storage.getSharedUrls(account.id),
+            });
         }
+        const context = resourceContext.context;
 
         const generatedPost = await generateValidatedPost({
             generator,
@@ -235,15 +246,48 @@ async function processScheduledAccount(options: {
 
         if (publishResult.published) {
             console.log(`Successfully published for ${pubKey.slice(0, 8)}...`);
-            await storage.updateLastRun(account.id);
-            await storage.addPostToHistory(account.id, content, publishResult.eventId);
+            await recordSuccessfulPost(
+                storage,
+                account.id,
+                content,
+                publishResult.eventId,
+                resourceContext
+            );
         } else {
             console.error(`Failed to publish for ${pubKey.slice(0, 8)}... Enqueuing for retry.`);
             if (env.FAILED_POSTS) {
-                await env.FAILED_POSTS.send({ account, content, targetRelays });
+                await env.FAILED_POSTS.send({
+                    account,
+                    content,
+                    targetRelays,
+                    sourceUrl: resourceContext.sourceUrl,
+                    sourceTitle: resourceContext.sourceTitle,
+                });
             }
         }
     } catch (error) {
         console.error('Error processing account:', error);
+    }
+}
+
+/**
+ * Persists the outcome of a successful publish: run timestamp, post history and,
+ * when the post was built from a resource item, that item as shared.
+ */
+async function recordSuccessfulPost(
+    storage: StorageService,
+    accountId: number,
+    content: string,
+    eventId: string,
+    resourceContext: ResourceContext
+): Promise<void> {
+    await storage.updateLastRun(accountId);
+    await storage.addPostToHistory(accountId, content, eventId);
+    if (resourceContext.sourceUrl) {
+        await storage.recordSharedItem(
+            accountId,
+            resourceContext.sourceUrl,
+            resourceContext.sourceTitle
+        );
     }
 }

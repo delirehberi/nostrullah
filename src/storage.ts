@@ -16,6 +16,7 @@ export interface ProcessedControlEventRecord {
 export class StorageService {
     private db: D1Database;
     private static readonly DEFAULT_POST_HISTORY_LIMIT = 20;
+    private static readonly SHARED_ITEM_RETENTION_SECONDS = 90 * 24 * 60 * 60;
 
     constructor(env: Env) {
         this.db = env.DB;
@@ -82,6 +83,53 @@ export class StorageService {
             )
             .bind(accountId, accountId)
             .run();
+    }
+
+    /**
+     * Returns the normalized item URLs the account shared within the retention window.
+     * Failures (e.g. migration not yet applied) yield an empty set so posting continues.
+     */
+    async getSharedUrls(accountId: number, now: Date = new Date()): Promise<Set<string>> {
+        try {
+            const { results } = await this.db
+                .prepare('SELECT url FROM shared_items WHERE account_id = ? AND created_at >= ?')
+                .bind(accountId, this.getSharedItemsCutoff(now))
+                .all();
+            return new Set(results.map((r: any) => r.url));
+        } catch (error) {
+            console.error(`Failed to load shared items for account ${accountId}:`, error);
+            return new Set();
+        }
+    }
+
+    /**
+     * Records a resource item as shared and prunes entries older than the retention window.
+     */
+    async recordSharedItem(
+        accountId: number,
+        url: string,
+        title?: string,
+        now: Date = new Date()
+    ): Promise<void> {
+        try {
+            await this.db
+                .prepare(
+                    'INSERT OR IGNORE INTO shared_items (account_id, url, title, created_at) VALUES (?, ?, ?, ?)'
+                )
+                .bind(accountId, url, title || null, Math.floor(now.getTime() / 1000))
+                .run();
+
+            await this.db
+                .prepare('DELETE FROM shared_items WHERE account_id = ? AND created_at < ?')
+                .bind(accountId, this.getSharedItemsCutoff(now))
+                .run();
+        } catch (error) {
+            console.error(`Failed to record shared item for account ${accountId}:`, error);
+        }
+    }
+
+    private getSharedItemsCutoff(now: Date): number {
+        return Math.floor(now.getTime() / 1000) - StorageService.SHARED_ITEM_RETENTION_SECONDS;
     }
 
     async findAccountIdByPostEventId(eventId: string): Promise<number | null> {
