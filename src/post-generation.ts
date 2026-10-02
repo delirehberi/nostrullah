@@ -105,26 +105,25 @@ export async function generateValidatedPost(
         }
     }
 
-    // All attempts failed validation. Rather than throwing (which silently drops the post),
-    // publish the best available candidate: prefer non-leaked, then no invalid URLs, then lowest similarity score.
-    const bestAttempt =
-        attempts
-            .filter((a) => !a.promptLeakage?.isLeaked && a.invalidUrls.length === 0)
-            .sort((a, b) => (a.similarityMatch?.score ?? 0) - (b.similarityMatch?.score ?? 0))[0] ??
-        attempts
-            .filter((a) => !a.promptLeakage?.isLeaked)
-            .sort((a, b) => (a.similarityMatch?.score ?? 0) - (b.similarityMatch?.score ?? 0))[0] ??
-        attempts
-            .filter((a) => a.invalidUrls.length === 0)
-            .sort((a, b) => (a.similarityMatch?.score ?? 0) - (b.similarityMatch?.score ?? 0))[0] ??
-        attempts[attempts.length - 1];
+    // All attempts were rejected. A draft rejected only for similarity is still safe to
+    // publish, so use the least similar one. Drafts that leaked the prompt or contain
+    // invalid URLs are never published: skip this run instead (it is retried on the next
+    // cron tick because last_run_at is not updated).
+    const bestAttempt = attempts
+        .filter((a) => !a.promptLeakage?.isLeaked && a.invalidUrls.length === 0)
+        .sort((a, b) => (a.similarityMatch?.score ?? 0) - (b.similarityMatch?.score ?? 0))[0];
+
+    if (!bestAttempt) {
+        throw new Error(
+            `All ${maxAttempts} generation attempts were rejected for prompt leakage or invalid URLs; ` +
+                'skipping publish'
+        );
+    }
 
     console.warn(
         `All ${maxAttempts} generation attempts were rejected. ` +
-            `Publishing best available candidate ` +
-            `(isLeaked=${bestAttempt.promptLeakage?.isLeaked ?? false}, ` +
-            `invalidUrls=${bestAttempt.invalidUrls.length}, ` +
-            `similarityScore=${bestAttempt.similarityMatch?.score ?? 'n/a'}).`
+            `Publishing the least similar safe candidate ` +
+            `(similarityScore=${bestAttempt.similarityMatch?.score ?? 'n/a'}).`
     );
 
     return {
