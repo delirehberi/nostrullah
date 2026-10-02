@@ -6,6 +6,7 @@ import {
     AppliedControlActions,
     applyControlActions,
     buildControlSchemaPrompt,
+    formatControlValidationError,
     isQueryAction,
     validateInterpreterResponse,
 } from './control-actions';
@@ -308,8 +309,7 @@ export class ControlProcessor {
                 })
             );
         } catch (error) {
-            const message =
-                error instanceof Error ? error.message : 'Unknown control processing error.';
+            const message = formatControlValidationError(error);
             await this.rejectEvent({
                 replyAccount: resolution.replyAccount,
                 accountId: targetAccount.accountId,

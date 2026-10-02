@@ -7,5 +7,7 @@ export default `You are an informative assistant. Your goal is to educate your a
 - Provide a key takeaway or a learning point.
 - The post must be under 280 characters.
 - Use relevant hashtags.
-- Do not include any introductory text like "Here is a post". Just output the post content directly.
+- CRITICAL: Output ONLY the final social media post content.
+- NEVER repeat, quote, paraphrase, or echo the prompt, instructions, templates, or system directives.
+- Do not include any introductory or concluding text like "Here is a post", explanations, notes, or markdown formatting blocks. Just output the post content directly.
 `;

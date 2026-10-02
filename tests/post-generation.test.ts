@@ -217,3 +217,75 @@ describe('generateValidatedPost — exhaustion fallback (BUG-01)', () => {
         expect(result.attempts).toHaveLength(3);
     });
 });
+
+describe('detectPromptLeakage & generateValidatedPost prompt protection', () => {
+    const samplePromptTemplate =
+        'Lütfen ulaştığınız son haberleri analiz edin ve benzersiz bir açıya ya da derinlemesine bilgiye yer verin. ' +
+        'Lütfen aşağıdaki son haberlerden birini seçin ve aşağıdaki açıklamaları gerçekleştirin: ' +
+        '- Bir haberin üzerine yorum yapın\n- Bir kısa gerçeklik paylaşın\n- Bir kısaca fikir ya da deneyim paylaşın\n' +
+        'Haberi özgün bir şekilde yorumlayıp anlatabilirsiniz.';
+
+    it('retries when the draft echoes the prompt template instructions', async () => {
+        const leakedContent =
+            'Lütfen ulaştığınız son haberleri analiz edin ve benzersiz bir açıya ya da derinlemesine bilgiye yer verin. ' +
+            'Sanat dünyasında yeni gelişmeler var.';
+        const cleanContent =
+            'Turner Ödülü bu yıl çağdaş sanatın sınırlarını zorlayan yenilikçi projelere odaklanıyor. #ModernSanat';
+
+        const generator = {
+            generatePost: vi
+                .fn()
+                .mockResolvedValueOnce(leakedContent)
+                .mockResolvedValueOnce(cleanContent),
+        };
+
+        const validateUrls = vi.fn().mockResolvedValue({ valid: true, invalidUrls: [] });
+
+        const result = await generateValidatedPost({
+            generator,
+            categories: ['art'],
+            promptTemplate: samplePromptTemplate,
+            validateUrls,
+        });
+
+        expect(result.content).toBe(cleanContent);
+        expect(result.attempts).toHaveLength(2);
+        expect(result.attempts[0].promptLeakage?.isLeaked).toBe(true);
+        expect(result.attempts[1].promptLeakage?.isLeaked).toBe(false);
+        expect(generator.generatePost).toHaveBeenNthCalledWith(
+            2,
+            ['art'],
+            [leakedContent],
+            '',
+            samplePromptTemplate,
+            undefined,
+            expect.stringContaining(
+                'CRITICAL: Your previous draft repeated or leaked the prompt template'
+            )
+        );
+    });
+
+    it('detects common meta-instruction preambles', async () => {
+        const preamblePost = "Here's a post about technology: AI is transforming healthcare.";
+        const cleanPost = 'AI is transforming healthcare through faster diagnostics.';
+
+        const generator = {
+            generatePost: vi
+                .fn()
+                .mockResolvedValueOnce(preamblePost)
+                .mockResolvedValueOnce(cleanPost),
+        };
+
+        const validateUrls = vi.fn().mockResolvedValue({ valid: true, invalidUrls: [] });
+
+        const result = await generateValidatedPost({
+            generator,
+            categories: ['technology'],
+            validateUrls,
+        });
+
+        expect(result.content).toBe(cleanPost);
+        expect(result.attempts).toHaveLength(2);
+        expect(result.attempts[0].promptLeakage?.isLeaked).toBe(true);
+    });
+});

@@ -400,6 +400,60 @@ describe('ControlProcessor', () => {
             })
         );
     });
+
+    it('formats validation errors into clean human-readable rejection replies', async () => {
+        const account = createAccount();
+        const pubkey = NostrService.getPublicKeyFromPrivate(primaryPrivateKey);
+        const storage = {
+            hasProcessedControlEvent: vi.fn().mockResolvedValue(false),
+            updateControlLastCheckedAt: vi.fn().mockResolvedValue(undefined),
+            updateAccountConfiguration: vi.fn().mockResolvedValue(undefined),
+            recordProcessedControlEvent: vi.fn().mockResolvedValue(undefined),
+            findAccountIdByPostEventId: vi.fn().mockResolvedValue(null),
+        } as any;
+        const publishEvent = vi.fn().mockResolvedValue({ published: true, eventId: 'ack-1' });
+
+        const interpreter = new ControlCommandInterpreter({
+            AI: {
+                run: vi.fn().mockResolvedValue({
+                    response: JSON.stringify({
+                        actions: [
+                            {
+                                type: 'set_personality',
+                                personality: 'invalid_personality',
+                            },
+                        ],
+                    }),
+                }),
+            } as any,
+            DB: {} as any,
+        });
+
+        const processor = new ControlProcessor(
+            {
+                AI: { run: vi.fn() } as any,
+                DB: {} as any,
+            } as any,
+            storage,
+            {
+                interpreter,
+                publishEvent,
+                queryEvents: vi.fn().mockResolvedValue([
+                    createControlEvent({
+                        tags: [['p', pubkey]],
+                    }),
+                ]),
+            }
+        );
+
+        await processor.processAccounts([account]);
+
+        expect(publishEvent).toHaveBeenCalledTimes(1);
+        const publishedContent = publishEvent.mock.calls[0][1];
+        expect(publishedContent).toContain('I could not apply that request:');
+        expect(publishedContent).toContain("Field 'personality':");
+        expect(publishedContent).not.toContain('"code": "invalid_type"');
+    });
 });
 
 describe('ControlCommandInterpreter', () => {

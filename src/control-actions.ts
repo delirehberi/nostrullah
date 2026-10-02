@@ -88,7 +88,62 @@ const removeResourceMatchSchema = z
         }
     });
 
-const controlActionSchema = z.discriminatedUnion('type', [
+function booleanCoerce(val: unknown): boolean | undefined {
+    if (typeof val === 'boolean') return val;
+    if (typeof val === 'string') {
+        const lower = val.trim().toLowerCase();
+        if (lower === 'true' || lower === '1' || lower === 'active' || lower === 'enabled') {
+            return true;
+        }
+        if (
+            lower === 'false' ||
+            lower === '0' ||
+            lower === 'inactive' ||
+            lower === 'disabled' ||
+            lower === 'paused'
+        ) {
+            return false;
+        }
+    }
+    if (typeof val === 'number') {
+        return val !== 0;
+    }
+    return undefined;
+}
+
+function preprocessAction(val: any): any {
+    if (!val || typeof val !== 'object') return val;
+    const type = val.type;
+    if (type === 'enable' || type === 'set_enabled') {
+        return { type: 'set_active', is_active: true };
+    }
+    if (type === 'disable' || type === 'set_disabled' || type === 'pause') {
+        return { type: 'set_active', is_active: false };
+    }
+    if (type === 'set_active') {
+        const rawActive =
+            val.is_active !== undefined
+                ? val.is_active
+                : val.active !== undefined
+                  ? val.active
+                  : val.enabled !== undefined
+                    ? val.enabled
+                    : val.value !== undefined
+                      ? val.value
+                      : val.disabled !== undefined
+                        ? !val.disabled
+                        : undefined;
+
+        const resolved = booleanCoerce(rawActive);
+        return {
+            type: 'set_active',
+            is_active: resolved !== undefined ? resolved : rawActive,
+        };
+    }
+    return val;
+}
+
+const baseControlActionSchema = z.discriminatedUnion('type', [
     z
         .object({
             type: z.literal('set_prompt'),
@@ -134,7 +189,9 @@ const controlActionSchema = z.discriminatedUnion('type', [
     z
         .object({
             type: z.literal('set_active'),
-            is_active: z.boolean(),
+            is_active: z.boolean({
+                message: 'is_active must be a boolean (true or false)',
+            }),
         })
         .strict(),
     z
@@ -171,6 +228,8 @@ const controlActionSchema = z.discriminatedUnion('type', [
         })
         .strict(),
 ]);
+
+const controlActionSchema = z.preprocess(preprocessAction, baseControlActionSchema);
 
 const controlResponseSchema = z
     .object({
@@ -350,18 +409,39 @@ export function buildControlSchemaPrompt(): string {
     return [
         'You convert admin Nostr notes into JSON account-update or query actions.',
         'Return JSON only with shape {"actions":[...]} and no markdown.',
-        'Allowed action types: show_resources, show_details, show_help, set_prompt, set_name, set_categories, set_personality, set_frequency, set_relays, set_active, add_resource, remove_resource, replace_resources.',
-        'Use {"type":"show_resources"} when the admin asks to view, list, or show data/content resources.',
-        'Use {"type":"show_details"} when the admin asks for account details, settings, status, schedule/frequency, tone, or relays.',
-        'Use {"type":"show_help"} when the admin asks what commands are supported, available commands, or help.',
+        'Allowed action types and shapes:',
+        '• Query actions: {"type":"show_details"}, {"type":"show_resources"}, {"type":"show_help"}.',
+        '• set_active: {"type":"set_active","is_active":true|false}. Use is_active=true for activate/enable/resume/disable false. Use is_active=false for deactivate/disable/pause/active false.',
+        '• set_prompt: {"type":"set_prompt","prompt_template":"<template string>"}.',
+        '• set_name: {"type":"set_name","name":"<name string>"}.',
+        '• set_categories: {"type":"set_categories","categories":["<cat1>","<cat2>"]}.',
+        `• set_personality: {"type":"set_personality","personality":"<value>"}. Allowed values: ${PERSONALITY_VALUES.join(', ')}.`,
+        '• set_frequency: {"type":"set_frequency","frequency":"<preset or cron>"}. Presets: hourly, every_2_hours, twice_a_day, daily. Cron: 5-part cron (e.g. 0 9,21 * * *).',
+        '• set_relays: {"type":"set_relays","relays":["<ws/wss url>"]}.',
+        '• add_resource: {"type":"add_resource","resource":{"type":"rss"|"scraping","url":"<http/https url>","weight":<optional number>}} or {"type":"add_resource","resource":{"type":"quote","categories":["<cat1>"],"weight":<optional number>}}.',
+        '• remove_resource: {"type":"remove_resource","match":{"type":"rss"|"scraping","url":"<url>"}} or {"type":"remove_resource","match":{"type":"quote","categories":["<cat1>"]}}.',
+        '• replace_resources: {"type":"replace_resources","resources":[<array of resources>]}.',
         'Never output private_key, id, created_at, last_run_at, control fields, or any code-change instructions.',
-        'Use frequency presets (hourly, every_2_hours, twice_a_day, daily) or standard 5-part cron expressions (e.g. 0 9,21 * * *).',
-        `Use exact personality values only: ${PERSONALITY_VALUES.join(', ')}.`,
-        'For add_resource and replace_resources, use resource.type values rss, scraping, or quote.',
-        'For rss/scraping resources include a full http/https url. For quote resources include categories.',
-        'For remove_resource, use {"type":"remove_resource","match":{...}} with type plus url for rss/scraping or categories for quote.',
         'If the request is ambiguous, unsupported, or does not clearly ask for a supported action or query, return {"actions":[]}.',
-    ].join(' ');
+    ].join('\n');
+}
+
+export function formatControlValidationError(error: unknown): string {
+    if (error instanceof z.ZodError) {
+        const messages = error.issues.map((issue) => {
+            const pathParts = issue.path.filter(
+                (p) => typeof p === 'string' && p !== 'actions' && isNaN(Number(p))
+            );
+            const path = pathParts.join('.');
+            const fieldPrefix = path ? `Field '${path}': ` : '';
+            return `${fieldPrefix}${issue.message}`;
+        });
+        return `Validation failed: ${messages.join('; ')}`;
+    }
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return 'An unexpected error occurred while processing the command.';
 }
 
 export function validateInterpreterResponse(text: string): ControlAction[] {

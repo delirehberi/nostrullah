@@ -1,6 +1,7 @@
 import { Personality } from './types';
 import { PostSimilarityChecker, SimilarityMatch } from './content-similarity';
 import { validatePostUrls } from './url-validator';
+import { detectPromptLeakage, PromptLeakageCheckResult } from './prompt-leakage';
 
 const DEFAULT_MAX_GENERATION_ATTEMPTS = 3;
 
@@ -19,6 +20,7 @@ export interface GeneratedPostAttempt {
     content: string;
     invalidUrls: string[];
     similarityMatch?: SimilarityMatch;
+    promptLeakage?: PromptLeakageCheckResult;
 }
 
 export interface GeneratedPostResult {
@@ -37,6 +39,7 @@ export interface GenerateValidatedPostOptions {
     validateUrls?: (content: string) => Promise<{ valid: boolean; invalidUrls: string[] }>;
     similarityHistory?: string[];
     similarityChecker?: PostSimilarityChecker;
+    checkPromptLeakage?: (content: string, promptTemplate?: string) => PromptLeakageCheckResult;
 }
 
 export async function generateValidatedPost(
@@ -46,6 +49,7 @@ export async function generateValidatedPost(
     const rejectedPosts: string[] = [];
     const maxAttempts = options.maxAttempts || DEFAULT_MAX_GENERATION_ATTEMPTS;
     const validateUrls = options.validateUrls || validatePostUrls;
+    const checkLeakage = options.checkPromptLeakage || detectPromptLeakage;
 
     for (let attemptNumber = 1; attemptNumber <= maxAttempts; attemptNumber++) {
         const guidance = buildRetryGuidance(attempts);
@@ -64,14 +68,16 @@ export async function generateValidatedPost(
                   ...rejectedPosts,
               ])
             : { isTooSimilar: false };
+        const leakageResult = checkLeakage(content, options.promptTemplate);
 
         attempts.push({
             content,
             invalidUrls: validation.invalidUrls,
             similarityMatch: similarityResult.match,
+            promptLeakage: leakageResult,
         });
 
-        if (validation.valid && !similarityResult.isTooSimilar) {
+        if (validation.valid && !similarityResult.isTooSimilar && !leakageResult.isLeaked) {
             return {
                 attempts,
                 content,
@@ -91,11 +97,23 @@ export async function generateValidatedPost(
                 `Generated post rejected for similarity on attempt ${attemptNumber}: ${similarityResult.match?.reason || 'unknown reason'}`
             );
         }
+
+        if (leakageResult.isLeaked) {
+            console.warn(
+                `Generated post rejected for prompt leakage on attempt ${attemptNumber}: ${leakageResult.reason || 'prompt leak detected'}`
+            );
+        }
     }
 
     // All attempts failed validation. Rather than throwing (which silently drops the post),
-    // publish the best available candidate: prefer no invalid URLs, then lowest similarity score.
+    // publish the best available candidate: prefer non-leaked, then no invalid URLs, then lowest similarity score.
     const bestAttempt =
+        attempts
+            .filter((a) => !a.promptLeakage?.isLeaked && a.invalidUrls.length === 0)
+            .sort((a, b) => (a.similarityMatch?.score ?? 0) - (b.similarityMatch?.score ?? 0))[0] ??
+        attempts
+            .filter((a) => !a.promptLeakage?.isLeaked)
+            .sort((a, b) => (a.similarityMatch?.score ?? 0) - (b.similarityMatch?.score ?? 0))[0] ??
         attempts
             .filter((a) => a.invalidUrls.length === 0)
             .sort((a, b) => (a.similarityMatch?.score ?? 0) - (b.similarityMatch?.score ?? 0))[0] ??
@@ -104,7 +122,8 @@ export async function generateValidatedPost(
     console.warn(
         `All ${maxAttempts} generation attempts were rejected. ` +
             `Publishing best available candidate ` +
-            `(invalidUrls=${bestAttempt.invalidUrls.length}, ` +
+            `(isLeaked=${bestAttempt.promptLeakage?.isLeaked ?? false}, ` +
+            `invalidUrls=${bestAttempt.invalidUrls.length}, ` +
             `similarityScore=${bestAttempt.similarityMatch?.score ?? 'n/a'}).`
     );
 
@@ -115,17 +134,26 @@ export async function generateValidatedPost(
 }
 
 function buildRetryGuidance(attempts: GeneratedPostAttempt[]): string | undefined {
-    const failedAttempts = attempts.filter((attempt) => attempt.invalidUrls.length > 0);
+    const failedUrls = attempts.filter((attempt) => attempt.invalidUrls.length > 0);
     const similarAttempts = attempts.filter((attempt) => attempt.similarityMatch);
+    const leakedAttempts = attempts.filter((attempt) => attempt.promptLeakage?.isLeaked);
 
-    if (failedAttempts.length === 0 && similarAttempts.length === 0) {
+    if (failedUrls.length === 0 && similarAttempts.length === 0 && leakedAttempts.length === 0) {
         return undefined;
     }
 
     const guidance: string[] = [];
 
-    if (failedAttempts.length > 0) {
-        const invalidUrls = failedAttempts.flatMap((attempt) => attempt.invalidUrls);
+    if (leakedAttempts.length > 0) {
+        guidance.push(
+            'CRITICAL: Your previous draft repeated or leaked the prompt template instructions or meta-commentary.',
+            'Output ONLY the final, ready-to-publish social media post.',
+            'NEVER quote, echo, or repeat the instructions or task descriptions.'
+        );
+    }
+
+    if (failedUrls.length > 0) {
+        const invalidUrls = failedUrls.flatMap((attempt) => attempt.invalidUrls);
 
         guidance.push(
             'Your previous draft included invalid or unreachable URLs.',

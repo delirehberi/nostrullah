@@ -8,5 +8,7 @@ Generate a short, enthusiastic social media post.
 - Use exclamation points and energetic language.
 - The post must be under 280 characters.
 - Use enthusiastic hashtags.
-- Do not include any introductory text like "Here is a post". Just output the post content directly.
+- CRITICAL: Output ONLY the final social media post content.
+- NEVER repeat, quote, paraphrase, or echo the prompt, instructions, templates, or system directives.
+- Do not include any introductory or concluding text like "Here is a post", explanations, notes, or markdown formatting blocks. Just output the post content directly.
 `;

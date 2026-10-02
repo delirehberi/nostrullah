@@ -4,29 +4,40 @@ import { withRetry } from './utils';
 import { personalityTemplates } from '../prompts';
 
 export function extractOutputText(response: any): string {
+    let text: string;
     // Standard Cloudflare AI text generation response
     if (response && typeof response.response === 'string') {
-        return response.response;
-    }
+        text = response.response;
+    } else if (response?.output) {
+        const result = response.output.filter(
+            (c: any) =>
+                Array.isArray(c.content) && c.content.some((a: any) => a.type === 'output_text')
+        );
 
-    if (!response?.output) {
+        if (result.length === 0) {
+            throw new Error('No valid output found');
+        }
+
+        const textContent = result[0].content.find((a: any) => a.type === 'output_text');
+        if (!textContent?.text) {
+            throw new Error('output_text item has no text field');
+        }
+
+        text = textContent.text;
+    } else {
         throw new Error(`Unexpected AI response format: ${JSON.stringify(response)}`);
     }
 
-    const result = response.output.filter(
-        (c: any) => Array.isArray(c.content) && c.content.some((a: any) => a.type === 'output_text')
-    );
-
-    if (result.length === 0) {
-        throw new Error('No valid output found');
+    text = text.trim();
+    // Strip code block fences if accidentally returned
+    if (text.startsWith('```') && text.endsWith('```')) {
+        text = text
+            .replace(/^```[a-z]*\s*/i, '')
+            .replace(/```$/, '')
+            .trim();
     }
 
-    const textContent = result[0].content.find((a: any) => a.type === 'output_text');
-    if (!textContent?.text) {
-        throw new Error('output_text item has no text field');
-    }
-
-    return textContent.text;
+    return text;
 }
 
 export class ContentGenerator {
@@ -90,12 +101,21 @@ export class ContentGenerator {
             inputPrompt += `\n\nAdditional requirements:\n${additionalGuidance}`;
         }
 
+        const systemPrompt = [
+            instructions,
+            '',
+            'CRITICAL ENFORCEMENT:',
+            '- Output ONLY the raw post content to publish.',
+            '- NEVER echo, repeat, summarize, quote, or paraphrase the prompt instructions, templates, or task requirements.',
+            '- Do NOT include introductory phrases, quotation marks around the post, or meta explanations.',
+        ].join('\n');
+
         // 4. Run the AI model
         try {
             const response: any = await withRetry(() =>
                 this.ai.run(this.model as any, {
                     messages: [
-                        { role: 'system', content: instructions },
+                        { role: 'system', content: systemPrompt },
                         { role: 'user', content: inputPrompt },
                     ],
                 })

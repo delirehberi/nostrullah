@@ -92,6 +92,70 @@ describe('validateInterpreterResponse', () => {
             )
         ).toThrow();
     });
+
+    it('tolerates flexible set_active formats (value, active, enabled, disabled, string booleans)', () => {
+        const actionWithValue = validateInterpreterResponse(
+            JSON.stringify({
+                actions: [
+                    {
+                        type: 'set_active',
+                        value: false,
+                    },
+                ],
+            })
+        );
+        expect(actionWithValue[0]).toEqual({ type: 'set_active', is_active: false });
+
+        const actionWithActive = validateInterpreterResponse(
+            JSON.stringify({
+                actions: [
+                    {
+                        type: 'set_active',
+                        active: true,
+                    },
+                ],
+            })
+        );
+        expect(actionWithActive[0]).toEqual({ type: 'set_active', is_active: true });
+
+        const actionWithEnabled = validateInterpreterResponse(
+            JSON.stringify({
+                actions: [
+                    {
+                        type: 'set_active',
+                        enabled: 'false',
+                    },
+                ],
+            })
+        );
+        expect(actionWithEnabled[0]).toEqual({ type: 'set_active', is_active: false });
+
+        const actionWithDisabled = validateInterpreterResponse(
+            JSON.stringify({
+                actions: [
+                    {
+                        type: 'set_active',
+                        disabled: true,
+                    },
+                ],
+            })
+        );
+        expect(actionWithDisabled[0]).toEqual({ type: 'set_active', is_active: false });
+
+        const directEnable = validateInterpreterResponse(
+            JSON.stringify({
+                actions: [{ type: 'enable' }],
+            })
+        );
+        expect(directEnable[0]).toEqual({ type: 'set_active', is_active: true });
+
+        const directDisable = validateInterpreterResponse(
+            JSON.stringify({
+                actions: [{ type: 'disable' }],
+            })
+        );
+        expect(directDisable[0]).toEqual({ type: 'set_active', is_active: false });
+    });
 });
 
 describe('applyControlActions', () => {
