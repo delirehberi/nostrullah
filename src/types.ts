@@ -21,6 +21,17 @@ export interface ResourceContext {
     context: string;
     sourceUrl?: string;
     sourceTitle?: string;
+    /** Resources tried for this context, in order (set by `fetchResources`). */
+    attempts?: ResourceAttempt[];
+}
+
+/** Result of one resource tried while building the prompt context. */
+export interface ResourceAttempt {
+    /** e.g. `rss(https://example.com/feed.xml)` or `quote(science)`. */
+    resource: string;
+    status: 'used' | 'empty' | 'error';
+    error?: string;
+    durationMs: number;
 }
 
 export interface FetchResourcesOptions {

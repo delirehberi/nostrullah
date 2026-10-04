@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { FetchResourcesOptions, Resource, ResourceContext } from './types';
+import { FetchResourcesOptions, Resource, ResourceAttempt, ResourceContext } from './types';
 
 const RSS_CANDIDATE_LIMIT = 10;
 // Upper bound on resources tried per run, to stay within Worker time limits.
@@ -48,18 +48,29 @@ export class ResourceService {
 
         const excludeUrls = options.excludeUrls || new Set<string>();
         const candidates = this.orderByWeight(resources).slice(0, MAX_RESOURCE_ATTEMPTS);
+        const attempts: ResourceAttempt[] = [];
 
         for (const resource of candidates) {
             const label = this.describeResource(resource);
+            const startedAt = Date.now();
             try {
                 const result = await this.fetchResource(resource, excludeUrls);
+                const durationMs = Date.now() - startedAt;
                 if (result.context.trim()) {
                     console.log(`Using resource ${label}`);
-                    return result;
+                    attempts.push({ resource: label, status: 'used', durationMs });
+                    return { ...result, attempts };
                 }
                 console.log(`Resource ${label} returned nothing new, trying next`);
+                attempts.push({ resource: label, status: 'empty', durationMs });
             } catch (error) {
                 console.error(`Failed to fetch resource ${label}:`, error);
+                attempts.push({
+                    resource: label,
+                    status: 'error',
+                    error: error instanceof Error ? error.message : String(error),
+                    durationMs: Date.now() - startedAt,
+                });
             }
         }
 
@@ -67,7 +78,7 @@ export class ResourceService {
             `All ${candidates.length} attempted resources failed or had nothing new; ` +
                 'generating without resource context'
         );
-        return { context: '' };
+        return { context: '', attempts };
     }
 
     private async fetchResource(

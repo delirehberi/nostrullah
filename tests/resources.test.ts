@@ -247,7 +247,16 @@ describe('ResourceService.fetchResources', () => {
                 }
             );
 
-            expect(result).toEqual({ context: '' });
+            expect(result).toEqual({
+                context: '',
+                attempts: [
+                    {
+                        resource: 'rss(https://example.com/feed/)',
+                        status: 'empty',
+                        durationMs: expect.any(Number),
+                    },
+                ],
+            });
         });
     });
 });
@@ -338,7 +347,14 @@ describe('ResourceService resource fallback', () => {
             }))
         );
 
-        expect(result).toEqual({ context: '' });
+        expect(result.context).toBe('');
+        expect(result.attempts).toHaveLength(3);
+        expect(result.attempts?.map((attempt) => attempt.status)).toEqual([
+            'error',
+            'error',
+            'error',
+        ]);
+        expect(result.attempts?.[0].error).toBe('HTTP error! status: 500');
         expect(requested).toHaveLength(3);
         expect(new Set(requested).size).toBe(3);
     });

@@ -35,6 +35,7 @@ This project is a headless Nostr bot running on Cloudflare Workers.
 7. A post format is picked by weight (`src/post-formats.ts`), avoiding the previous post's format, for accounts without a custom `prompt_template` or whose template contains `$$FORMAT$$`; accounts on the default weights get them scaled (0.5-2x) by each format's measured engagement. The 3 best-scoring posts of the last 30 days are added to the prompt (same template rule, via `$$TOP_POSTS$$`). `ContentGenerator` builds the prompt and calls Cloudflare AI.
 8. `NostrService` signs and publishes the generated post to all configured relays. Hashtags in the post (max 5) are added as NIP-12 `t` tags via `src/hashtags.ts`.
 9. On success, `last_run_at`, `post_history` and (for RSS-based posts) `shared_items` are updated in D1.
+10. Every account run, skips included, is recorded in `run_log` by a `RunTrace` (`src/run-trace.ts`): schedule decision, resources tried, format choice, each draft and why it was rejected, per-relay publish result, and the failing stage on errors. A queued publish retry updates its run. The debug page (`/debug`, `src/debug-page.ts`) shows these traces.
 
 ## Repository Map
 
@@ -71,6 +72,15 @@ This project is a headless Nostr bot running on Cloudflare Workers.
 
 - `src/hashtags.ts`
     - Extracts hashtags from generated posts and builds `t` tags for publishing.
+
+- `src/run-trace.ts`
+    - `RunTrace` collects what happened in one account run (and why) for `run_log`.
+
+- `src/debug-page.ts`
+    - Server-rendered `/debug` page: per-account 7-day summary, filterable run timeline, raw run JSON at `/debug/run/:id`.
+
+- `src/debug-auth.ts`
+    - Nostr login for the debug page: NIP-98 (kind 27235) events signed via a NIP-07 extension, accepted only from `DEBUG_ADMIN_NPUB`; single-use events, 12h HttpOnly session cookies (only hashes stored).
 
 - `src/types.ts`
     - Shared TypeScript types, including `Env`, `NostrAccount`, and `Resource`.
@@ -166,6 +176,17 @@ Frequency presets (in the account's timezone): `hourly`, `every_2_hours`, `twice
 - `url` (normalized item link, unique per account)
 - `title`
 - `created_at` (unix seconds; rows older than 90 days are pruned)
+
+### `run_log`
+
+- `id` (UUID), `account_id`, `account_name`, `started_at` (unix seconds), `duration_ms`
+- `outcome` (`published`, `queued`, `failed`, `error`, `skipped`), `summary`, `post_format`, `event_id`
+- `details` (JSON `RunTraceDetails`, see `src/run-trace.ts`)
+- Rows older than 30 days are pruned on each cron run.
+
+### `debug_sessions` / `debug_login_events`
+
+- Debug page sessions (`token_hash`, `pubkey`, `created_at`, `expires_at`) and used NIP-98 login event ids (pruned after a day).
 
 If a change affects account shape or persistence, review:
 
@@ -282,7 +303,11 @@ Sanity-check docs and scripts against the actual code before reusing old wording
 
 - `wrangler.toml` currently contains account-like data in `[vars].NOSTR_ACCOUNTS`, but the active account-loading path does not use it.
 
-- The preview endpoint in `src/index.ts` is intentionally gated by checking whether the request URL contains `1542`.
+- The preview endpoint in `src/index.ts` is intentionally gated by checking whether the request URL contains `1542`. `/debug*` routes are handled before that gate and use Nostr login instead.
+
+- Only `DEBUG_ADMIN_NPUB` in `src/debug-auth.ts` can log in to the debug page; per-account `control_admin_pubkeys` do not grant access. Changing it requires a code change and deploy.
+
+- When a new step is added to the posting pipeline, record it on the `RunTrace` in `processScheduledAccount` so the debug page stays complete.
 
 - Admin control commands are read only from the relays in `CONTROL_RELAY_URLS` (`src/control.ts`): relay.ditto.pub, relay.primal.net, relay.nostr.org.tr, relay.emre.xyz and relay.damus.io. A command published to none of them is never seen.
 
