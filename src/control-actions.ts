@@ -13,6 +13,7 @@ import {
 } from './types';
 import { MAX_JITTER_MINUTES, SchedulerService } from './scheduler';
 import { DEFAULT_POST_FORMAT_WEIGHTS, formatPostFormats } from './post-formats';
+import { EngagementStats, formatEngagementStats } from './engagement';
 import { DEFAULT_MAX_POST_LENGTH, MAX_MAX_POST_LENGTH, MIN_MAX_POST_LENGTH } from './post-length';
 
 export interface AccountConfigPatch {
@@ -310,6 +311,11 @@ const baseControlActionSchema = z.discriminatedUnion('type', [
             type: z.literal('show_help'),
         })
         .strict(),
+    z
+        .object({
+            type: z.literal('show_stats'),
+        })
+        .strict(),
 ]);
 
 const controlActionSchema = z.preprocess(preprocessAction, baseControlActionSchema);
@@ -375,6 +381,7 @@ export function formatSupportedCommands(): string {
         'Supported commands:',
         '• show details - View account schedule, personality, categories, and relays',
         '• show resources - List configured RSS feeds, scraping feeds, and quote sources',
+        '• show stats - Reactions, reposts, replies and zaps of the last 7 days, and the top post',
         '• what commands do you support / help - View this command guide',
         '• set personality <informative|humorous|enthusiastic|sarcastic|philosophical> - Update tone',
         '• set frequency <hourly|every_2_hours|twice_a_day|daily|cron> - Update posting schedule (daily = 09:00, twice a day = 09:00 & 18:00)',
@@ -398,13 +405,20 @@ export function isQueryAction(action: ControlAction): boolean {
     return (
         action.type === 'show_resources' ||
         action.type === 'show_details' ||
-        action.type === 'show_help'
+        action.type === 'show_help' ||
+        action.type === 'show_stats'
     );
+}
+
+export interface ControlActionContext {
+    /** Engagement stats for `show_stats`, loaded by the caller. */
+    engagementStats?: EngagementStats;
 }
 
 export function applyControlActions(
     account: NostrAccount,
-    actions: ControlAction[]
+    actions: ControlAction[],
+    context: ControlActionContext = {}
 ): AppliedControlActions {
     const updatedAccount: NostrAccount = cloneAccount(account);
     const summary: string[] = [];
@@ -419,6 +433,9 @@ export function applyControlActions(
                 break;
             case 'show_help':
                 summary.push(formatSupportedCommands());
+                break;
+            case 'show_stats':
+                summary.push(formatEngagementStats(context.engagementStats));
                 break;
             case 'set_prompt':
                 updatedAccount.prompt_template = action.prompt_template;
@@ -546,7 +563,7 @@ export function buildControlSchemaPrompt(): string {
         'You convert admin Nostr notes into JSON account-update or query actions.',
         'Return JSON only with shape {"actions":[...]} and no markdown.',
         'Allowed action types and shapes:',
-        '• Query actions: {"type":"show_details"}, {"type":"show_resources"}, {"type":"show_help"}.',
+        '• Query actions: {"type":"show_details"}, {"type":"show_resources"}, {"type":"show_help"}, {"type":"show_stats"} (engagement statistics).',
         '• set_active: {"type":"set_active","is_active":true|false}. Use is_active=true for activate/enable/resume/disable false. Use is_active=false for deactivate/disable/pause/active false.',
         '• set_prompt: {"type":"set_prompt","prompt_template":"<template string>"}.',
         '• set_name: {"type":"set_name","name":"<name string>"}.',

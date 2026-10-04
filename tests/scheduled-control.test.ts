@@ -10,6 +10,11 @@ const fetchResources = vi.fn();
 const getSharedUrls = vi.fn();
 const recordSharedItem = vi.fn();
 const getLastPostFormat = vi.fn();
+const getTopPosts = vi.fn();
+const getFormatPerformance = vi.fn();
+const updateEngagementCheckedAt = vi.fn();
+const getPostsForEngagement = vi.fn();
+const saveEngagement = vi.fn();
 const generateValidatedPost = vi.fn();
 const publishEvent = vi.fn();
 
@@ -34,6 +39,11 @@ vi.mock('../src/storage', () => ({
         getSharedUrls = getSharedUrls;
         recordSharedItem = recordSharedItem;
         getLastPostFormat = getLastPostFormat;
+        getTopPosts = getTopPosts;
+        getFormatPerformance = getFormatPerformance;
+        updateEngagementCheckedAt = updateEngagementCheckedAt;
+        getPostsForEngagement = getPostsForEngagement;
+        saveEngagement = saveEngagement;
     },
 }));
 
@@ -73,6 +83,18 @@ describe('runScheduled control ordering', () => {
         getSharedUrls.mockReset();
         recordSharedItem.mockReset();
         getLastPostFormat.mockReset();
+        for (const mock of [
+            getTopPosts,
+            getFormatPerformance,
+            updateEngagementCheckedAt,
+            getPostsForEngagement,
+            saveEngagement,
+        ]) {
+            mock.mockReset();
+        }
+        getTopPosts.mockResolvedValue([]);
+        getFormatPerformance.mockResolvedValue([]);
+        getPostsForEngagement.mockResolvedValue([]);
         generateValidatedPost.mockReset();
         publishEvent.mockReset();
 
@@ -277,5 +299,62 @@ describe('runScheduled control ordering', () => {
             })
         );
         expect(addPostToHistory).toHaveBeenCalledWith(3, 'İpucu: yedek alın.', 'post-1', 'tip');
+        // Engagement collection was attempted for the account (throttle timestamp set)
+        expect(updateEngagementCheckedAt).toHaveBeenCalledWith(3, expect.any(Number));
+    });
+
+    it('passes top-performing posts to generation and to the similarity check', async () => {
+        const account = {
+            id: 4,
+            name: 'Bot',
+            privateKey: '1'.repeat(64),
+            relays: ['wss://relay.example'],
+            categories: ['technology'],
+            frequency: 'daily',
+            data_resources: [],
+            prompt_template: undefined,
+            personality: 'informative',
+            is_active: true,
+            control_enabled: false,
+            control_admin_pubkeys: [],
+            control_last_checked_at: 0,
+            last_run_at: 0,
+            engagement_checked_at: Math.floor(Date.now() / 1000),
+        };
+
+        getAccounts.mockResolvedValue([account]);
+        processAccounts.mockResolvedValue(undefined);
+        getPostHistory.mockResolvedValue(['older post']);
+        getTopPosts.mockResolvedValue(['viral post']);
+        getFormatPerformance.mockResolvedValue([
+            { format: 'tip', score: 10 },
+            { format: 'tip', score: 10 },
+            { format: 'tip', score: 10 },
+            { format: 'question', score: 1 },
+        ]);
+        generateValidatedPost.mockResolvedValue({
+            content: 'yeni gönderi',
+            attempts: [{ content: 'yeni gönderi', invalidUrls: [] }],
+        });
+
+        const { runScheduled } = await import('../src/index');
+        const pending: Promise<void>[] = [];
+        await runScheduled(
+            {} as any,
+            { AI: { run: vi.fn() } as any, DB: {} as any } as any,
+            { waitUntil: (promise: Promise<void>) => pending.push(promise) } as any
+        );
+        await Promise.all(pending);
+
+        expect(getTopPosts).toHaveBeenCalledWith(4, expect.any(Number), 3);
+        expect(generateValidatedPost).toHaveBeenCalledWith(
+            expect.objectContaining({
+                topPosts: ['viral post'],
+                similarityHistory: ['older post', 'viral post'],
+            })
+        );
+        expect(getFormatPerformance).toHaveBeenCalledWith(4, expect.any(Number));
+        // Checked recently: no new engagement collection
+        expect(updateEngagementCheckedAt).not.toHaveBeenCalled();
     });
 });

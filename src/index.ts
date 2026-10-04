@@ -12,6 +12,13 @@ import { buildHashtagTags } from './hashtags';
 import { SchedulerService } from './scheduler';
 import { resolveMaxPostLength } from './post-length';
 import {
+    EngagementService,
+    TOP_POSTS_LIMIT,
+    TOP_POSTS_LOOKBACK_SECONDS,
+    TOP_POSTS_PLACEHOLDER,
+    adjustFormatWeights,
+} from './engagement';
+import {
     POST_FORMAT_INSTRUCTIONS,
     isFormatRotationEnabled,
     selectPostFormat,
@@ -47,7 +54,10 @@ export async function runScheduled(
     // BUG-02: ResourceService holds a stateful XMLParser instance. Instantiate
     // it per-account inside processScheduledAccount so concurrent accounts cannot
     // corrupt each other's parsing state.
+    const engagementService = new EngagementService(storage);
+
     for (const account of accounts) {
+        ctx.waitUntil(refreshEngagement(engagementService, account));
         ctx.waitUntil(
             processScheduledAccount({
                 account,
@@ -127,17 +137,19 @@ export default {
                 }
                 const context = resourceContext.context;
                 const format = await choosePostFormat(storage, account, resourceContext);
+                const topPosts = await loadTopPosts(storage, account);
 
                 const generatedPost = await generateValidatedPost({
                     generator,
                     categories: account.categories,
                     previousPosts: promptHistory,
-                    similarityHistory: history,
+                    similarityHistory: [...history, ...topPosts],
                     context,
                     promptTemplate: account.prompt_template,
                     personality: account.personality,
                     formatInstruction: format ? POST_FORMAT_INSTRUCTIONS[format] : undefined,
                     maxLength: resolveMaxPostLength(account.max_post_length, env.MAX_POST_LENGTH),
+                    topPosts,
                     similarityChecker: similarityService,
                 });
                 const content = generatedPost.content;
@@ -151,6 +163,7 @@ export default {
                     context_used: !!context,
                     source_url: resourceContext.sourceUrl,
                     format: format || null,
+                    top_posts: topPosts,
                     account_details: {
                         prompt: account.prompt_template,
                         resources: account.data_resources,
@@ -220,6 +233,7 @@ async function processScheduledAccount(options: {
         }
         const context = resourceContext.context;
         const format = await choosePostFormat(storage, account, resourceContext);
+        const topPosts = await loadTopPosts(storage, account);
         if (format) {
             console.log(`Using post format ${format} for ${pubKey.slice(0, 8)}...`);
         }
@@ -228,12 +242,13 @@ async function processScheduledAccount(options: {
             generator,
             categories: account.categories,
             previousPosts: promptHistory,
-            similarityHistory: history,
+            similarityHistory: [...history, ...topPosts],
             context,
             promptTemplate: account.prompt_template,
             personality: account.personality,
             formatInstruction: format ? POST_FORMAT_INSTRUCTIONS[format] : undefined,
             maxLength: resolveMaxPostLength(account.max_post_length, env.MAX_POST_LENGTH),
+            topPosts,
             similarityChecker: similarityService,
         });
         const content = generatedPost.content;
@@ -296,6 +311,36 @@ async function processScheduledAccount(options: {
 }
 
 /**
+ * Best-performing recent posts for the prompt: used for accounts without a custom
+ * prompt template, or whose template contains `$$TOP_POSTS$$`.
+ */
+async function loadTopPosts(storage: StorageService, account: NostrAccount): Promise<string[]> {
+    if (
+        !account.id ||
+        (account.prompt_template && !account.prompt_template.includes(TOP_POSTS_PLACEHOLDER))
+    ) {
+        return [];
+    }
+
+    return storage.getTopPosts(
+        account.id,
+        Math.floor(Date.now() / 1000) - TOP_POSTS_LOOKBACK_SECONDS,
+        TOP_POSTS_LIMIT
+    );
+}
+
+async function refreshEngagement(
+    engagementService: EngagementService,
+    account: NostrAccount
+): Promise<void> {
+    try {
+        await engagementService.refreshAccount(account);
+    } catch (error) {
+        console.error(`Failed to collect engagement for account ${account.id}:`, error);
+    }
+}
+
+/**
  * Picks this post's format, or undefined when rotation does not apply to the account
  * (custom prompt template without `$$FORMAT$$`, or rotation switched off).
  */
@@ -308,7 +353,17 @@ async function choosePostFormat(
         return undefined;
     }
 
-    return selectPostFormat(account.post_formats, {
+    // Accounts on the default weights get them adjusted by measured engagement.
+    const weights =
+        account.post_formats ??
+        adjustFormatWeights(
+            await storage.getFormatPerformance(
+                account.id,
+                Math.floor(Date.now() / 1000) - TOP_POSTS_LOOKBACK_SECONDS
+            )
+        );
+
+    return selectPostFormat(weights, {
         hasLinkContext: Boolean(resourceContext.sourceUrl),
         lastFormat: await storage.getLastPostFormat(account.id),
     });

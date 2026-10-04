@@ -4,6 +4,7 @@ import { withRetry } from './utils';
 import { personalityTemplates } from '../prompts';
 import { FORMAT_PLACEHOLDER } from './post-formats';
 import { MAX_LENGTH_PLACEHOLDER, resolveMaxPostLength } from './post-length';
+import { TOP_POSTS_PLACEHOLDER, formatTopPostsForPrompt } from './engagement';
 
 export function extractOutputText(response: any): string {
     let text: string;
@@ -49,6 +50,8 @@ export interface GeneratePostOptions {
     formatInstruction?: string;
     /** Character limit (links excluded); defaults to MAX_POST_LENGTH or 500. */
     maxLength?: number;
+    /** Best-performing recent posts, shown as examples of what resonated. */
+    topPosts?: string[];
 }
 
 export class ContentGenerator {
@@ -107,6 +110,13 @@ export class ContentGenerator {
             );
         } else if (formatInstruction) {
             inputPrompt += `\n\nPost format for this post: ${formatInstruction}`;
+        }
+
+        const topPostsBlock = formatTopPostsForPrompt(options.topPosts || []);
+        if (inputPrompt.includes(TOP_POSTS_PLACEHOLDER)) {
+            inputPrompt = inputPrompt.replace(TOP_POSTS_PLACEHOLDER, topPostsBlock);
+        } else if (topPostsBlock) {
+            inputPrompt += `\n\n${topPostsBlock}`;
         }
 
         if (inputPrompt.includes('$$CATEGORIES$$')) {

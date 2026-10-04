@@ -45,6 +45,8 @@ export interface GenerateValidatedPostOptions {
     formatInstruction?: string;
     /** Character limit (links excluded). Unset = no length check. */
     maxLength?: number;
+    /** Best-performing recent posts passed to the prompt. */
+    topPosts?: string[];
     maxAttempts?: number;
     validateUrls?: (content: string) => Promise<{ valid: boolean; invalidUrls: string[] }>;
     similarityHistory?: string[];
@@ -73,6 +75,7 @@ export async function generateValidatedPost(
                 additionalGuidance: guidance,
                 formatInstruction: options.formatInstruction,
                 maxLength: options.maxLength,
+                topPosts: options.topPosts,
             }
         );
         const validation = await validateUrls(content);

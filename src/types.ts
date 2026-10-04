@@ -131,6 +131,9 @@ export type ControlAction =
       }
     | {
           type: 'show_help';
+      }
+    | {
+          type: 'show_stats';
       };
 
 export interface NostrAccount {
@@ -155,6 +158,8 @@ export interface NostrAccount {
     post_formats?: PostFormatWeights;
     /** Post length limit in characters, links excluded; unset = env var or default. */
     max_post_length?: number;
+    /** Unix seconds of the last engagement collection. */
+    engagement_checked_at?: number;
     control_enabled?: boolean;
     control_admin_pubkeys?: string[];
     control_last_checked_at?: number;

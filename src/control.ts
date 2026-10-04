@@ -13,6 +13,7 @@ import {
 import { NostrQueryFilter, NostrService, PublishEventResult } from './nostr';
 import { ProcessedControlEventRecord, StorageService } from './storage';
 import { withRetry } from './utils';
+import { ENGAGEMENT_LOOKBACK_SECONDS } from './engagement';
 
 const CONTROL_QUERY_LIMIT = 50;
 const CONTROL_LOOKBACK_SECONDS = 300;
@@ -271,7 +272,15 @@ export class ControlProcessor {
             );
             parsedActionsJson = JSON.stringify(actions);
 
-            const applied = applyControlActions(targetAccount.account, actions);
+            const engagementStats = actions.some((a) => a.type === 'show_stats')
+                ? await this.storage.getEngagementStats(
+                      targetAccount.accountId,
+                      Math.floor(Date.now() / 1000) - ENGAGEMENT_LOOKBACK_SECONDS
+                  )
+                : undefined;
+            const applied = applyControlActions(targetAccount.account, actions, {
+                engagementStats,
+            });
             const changeCount = Object.keys(applied.patch).length;
 
             if (changeCount > 0) {
@@ -353,7 +362,8 @@ export class ControlProcessor {
             const isQuerySummary = (text: string) =>
                 text.startsWith('Account details:') ||
                 text.startsWith('Configured resources') ||
-                text.startsWith('Supported commands:');
+                text.startsWith('Supported commands:') ||
+                text.startsWith('Engagement stats');
             const mutationSummary = applied.summary.filter((s) => !isQuerySummary(s));
             const querySummary = applied.summary.filter(isQuerySummary);
 

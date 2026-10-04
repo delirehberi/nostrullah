@@ -456,3 +456,26 @@ describe('set_max_length control action', () => {
         expect(reset.summary[1]).toContain('Max post length: default (MAX_POST_LENGTH or 500)');
     });
 });
+
+describe('show_stats control action', () => {
+    it('is a query action that renders the provided engagement stats', () => {
+        expect(
+            validateInterpreterResponse(JSON.stringify({ actions: [{ type: 'show_stats' }] }))
+        ).toEqual([{ type: 'show_stats' }]);
+
+        const result = applyControlActions(baseAccount, [{ type: 'show_stats' }], {
+            engagementStats: {
+                posts: 3,
+                reactions: 5,
+                reposts: 1,
+                replies: 2,
+                zaps: 0,
+                zapSats: 0,
+                checkedAt: 1_790_000_000,
+            },
+        });
+
+        expect(result.patch).toEqual({});
+        expect(result.summary[0]).toContain('Reactions: 5');
+    });
+});

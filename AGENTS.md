@@ -28,11 +28,11 @@ This project is a headless Nostr bot running on Cloudflare Workers.
 
 1. The cron trigger invokes `scheduled()` in `src/index.ts`.
 2. `getAccounts()` in `src/config.ts` loads all active accounts from the `accounts` table.
-3. Each account is processed in `ctx.waitUntil(...)`.
+3. Each account is processed in `ctx.waitUntil(...)`. In a separate `waitUntil`, `EngagementService` (`src/engagement.ts`) collects reactions, reposts, replies and zaps for the account's posts of the last 7 days, at most every 6 hours (one relay query per account), and stores per-post counts and scores.
 4. The worker checks whether the account should run now using `StorageService.shouldRun()` (`src/scheduler.ts`): the frequency is evaluated in the account's `timezone`, nothing is posted outside `active_hours` (a slot missed overnight posts once when the window opens), and each slot is delayed by a stable random 0..`jitter_minutes` offset.
 5. The worker loads recent post history from `post_history`.
 6. The worker optionally fetches external resource context. Resources are tried in weighted-random order (up to 3) until one returns usable content; RSS items already listed in `shared_items` are skipped. If none succeed, the post is generated without resource context.
-7. A post format is picked by weight (`src/post-formats.ts`), avoiding the previous post's format, for accounts without a custom `prompt_template` or whose template contains `$$FORMAT$$`. `ContentGenerator` builds the prompt and calls Cloudflare AI.
+7. A post format is picked by weight (`src/post-formats.ts`), avoiding the previous post's format, for accounts without a custom `prompt_template` or whose template contains `$$FORMAT$$`; accounts on the default weights get them scaled (0.5-2x) by each format's measured engagement. The 3 best-scoring posts of the last 30 days are added to the prompt (same template rule, via `$$TOP_POSTS$$`). `ContentGenerator` builds the prompt and calls Cloudflare AI.
 8. `NostrService` signs and publishes the generated post to all configured relays. Hashtags in the post (max 5) are added as NIP-12 `t` tags via `src/hashtags.ts`.
 9. On success, `last_run_at`, `post_history` and (for RSS-based posts) `shared_items` are updated in D1.
 
@@ -65,6 +65,9 @@ This project is a headless Nostr bot running on Cloudflare Workers.
 
 - `src/post-formats.ts`
     - Post format definitions (`news_commentary`, `question`, `tip`, `hot_take`, `short_list`), default weights and weighted selection.
+
+- `src/engagement.ts`
+    - Collects and scores engagement (reactions, reposts, replies, zaps), adjusts format weights and formats top posts / stats.
 
 - `src/hashtags.ts`
     - Extracts hashtags from generated posts and builds `t` tags for publishing.
@@ -142,6 +145,7 @@ The worker currently depends on these D1 tables:
 - `jitter_minutes` (0-60, default `15`)
 - `post_formats` as JSON text (format → weight; `NULL` = defaults, `{}` = rotation off)
 - `max_post_length` (100-2000 characters, links not counted; `NULL` = `MAX_POST_LENGTH` env var or 500)
+- `engagement_checked_at` (unix seconds of the last engagement collection)
 
 Frequency presets (in the account's timezone): `hourly`, `every_2_hours`, `twice_a_day` (09:00 and 18:00), `daily` (09:00); any 5-field cron expression is also accepted.
 
@@ -153,6 +157,7 @@ Frequency presets (in the account's timezone): `hourly`, `every_2_hours`, `twice
 - `created_at`
 - `event_id`
 - `format` (post format used, if any)
+- `reactions`, `reposts`, `replies`, `zaps`, `zap_sats`, `engagement_score` (reactions + 2×reposts + 3×replies + 3×zaps), `engagement_updated_at`
 
 ### `shared_items`
 
@@ -234,6 +239,7 @@ Prompt templates may contain these placeholders:
 - `$$POST_HISTORY$$`
 - `$$FORMAT$$` (post format instruction; also opts a custom template into format rotation)
 - `$$MAX_LENGTH$$` (the account's character limit; also used by the personality templates)
+- `$$TOP_POSTS$$` (best-performing recent posts; also opts a custom template into this feedback)
 
 Drafts longer than the limit (links not counted, see `src/post-length.ts`) are retried with shortening guidance; if every attempt is too long, the shortest safe draft is published.
 

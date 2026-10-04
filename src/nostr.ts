@@ -27,6 +27,7 @@ export interface NostrQueryFilter {
     kinds?: number[];
     authors?: string[];
     '#p'?: string[];
+    '#e'?: string[];
     since?: number;
     limit?: number;
 }

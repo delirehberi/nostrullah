@@ -1,5 +1,12 @@
 import { Env } from './types';
 import { AccountConfigPatch } from './control-actions';
+import {
+    EngagementCounts,
+    EngagementPost,
+    EngagementStats,
+    EngagementStore,
+    FormatPerformance,
+} from './engagement';
 import { ScheduleSettings, SchedulerService } from './scheduler';
 
 export interface ProcessedControlEventRecord {
@@ -13,7 +20,7 @@ export interface ProcessedControlEventRecord {
     eventCreatedAt: number;
 }
 
-export class StorageService {
+export class StorageService implements EngagementStore {
     private db: D1Database;
     private static readonly DEFAULT_POST_HISTORY_LIMIT = 20;
     private static readonly SHARED_ITEM_RETENTION_SECONDS = 90 * 24 * 60 * 60;
@@ -172,6 +179,156 @@ export class StorageService {
             return result?.format || undefined;
         } catch (error) {
             console.error(`Failed to load last post format for account ${accountId}:`, error);
+            return undefined;
+        }
+    }
+
+    /**
+     * Throws when the column is missing (migration 0009 not applied), which stops the
+     * engagement collection instead of re-querying relays on every cron tick.
+     */
+    async updateEngagementCheckedAt(accountId: number, timestamp: number): Promise<void> {
+        await this.db
+            .prepare('UPDATE accounts SET engagement_checked_at = ? WHERE id = ?')
+            .bind(timestamp, accountId)
+            .run();
+    }
+
+    /**
+     * Published posts (with an event id) created since `sinceTimestamp`, newest first.
+     */
+    async getPostsForEngagement(
+        accountId: number,
+        sinceTimestamp: number,
+        limit: number
+    ): Promise<EngagementPost[]> {
+        const { results } = await this.db
+            .prepare(
+                `SELECT event_id, CAST(strftime('%s', created_at) AS INTEGER) AS created_ts
+                FROM post_history
+                WHERE account_id = ? AND event_id IS NOT NULL AND created_at >= datetime(?, 'unixepoch')
+                ORDER BY created_at DESC LIMIT ?`
+            )
+            .bind(accountId, sinceTimestamp, limit)
+            .all();
+        return results.map((r: any) => ({ eventId: r.event_id, createdAt: Number(r.created_ts) }));
+    }
+
+    async saveEngagement(
+        accountId: number,
+        eventId: string,
+        counts: EngagementCounts,
+        score: number,
+        timestamp: number
+    ): Promise<void> {
+        await this.db
+            .prepare(
+                `UPDATE post_history
+                SET reactions = ?, reposts = ?, replies = ?, zaps = ?, zap_sats = ?,
+                    engagement_score = ?, engagement_updated_at = ?
+                WHERE account_id = ? AND event_id = ?`
+            )
+            .bind(
+                counts.reactions,
+                counts.reposts,
+                counts.replies,
+                counts.zaps,
+                counts.zapSats,
+                score,
+                timestamp,
+                accountId,
+                eventId
+            )
+            .run();
+    }
+
+    /**
+     * Contents of the best-scoring posts (score > 0) created since `sinceTimestamp`.
+     */
+    async getTopPosts(accountId: number, sinceTimestamp: number, limit: number): Promise<string[]> {
+        try {
+            const { results } = await this.db
+                .prepare(
+                    `SELECT content FROM post_history
+                    WHERE account_id = ? AND engagement_score > 0 AND created_at >= datetime(?, 'unixepoch')
+                    ORDER BY engagement_score DESC, created_at DESC LIMIT ?`
+                )
+                .bind(accountId, sinceTimestamp, limit)
+                .all();
+            return results.map((r: any) => r.content);
+        } catch (error) {
+            console.error(`Failed to load top posts for account ${accountId}:`, error);
+            return [];
+        }
+    }
+
+    /**
+     * Format and score of measured posts created since `sinceTimestamp`.
+     */
+    async getFormatPerformance(
+        accountId: number,
+        sinceTimestamp: number
+    ): Promise<FormatPerformance[]> {
+        try {
+            const { results } = await this.db
+                .prepare(
+                    `SELECT format, engagement_score FROM post_history
+                    WHERE account_id = ? AND format IS NOT NULL AND engagement_updated_at IS NOT NULL
+                      AND created_at >= datetime(?, 'unixepoch')`
+                )
+                .bind(accountId, sinceTimestamp)
+                .all();
+            return results.map((r: any) => ({
+                format: r.format,
+                score: Number(r.engagement_score) || 0,
+            }));
+        } catch (error) {
+            console.error(`Failed to load format performance for account ${accountId}:`, error);
+            return [];
+        }
+    }
+
+    /**
+     * Aggregated engagement for posts created since `sinceTimestamp`, plus the top post.
+     */
+    async getEngagementStats(
+        accountId: number,
+        sinceTimestamp: number
+    ): Promise<EngagementStats | undefined> {
+        try {
+            const totals = await this.db
+                .prepare(
+                    `SELECT COUNT(*) AS posts, SUM(reactions) AS reactions, SUM(reposts) AS reposts,
+                        SUM(replies) AS replies, SUM(zaps) AS zaps, SUM(zap_sats) AS zap_sats,
+                        (SELECT engagement_checked_at FROM accounts WHERE id = ?) AS checked_at
+                    FROM post_history
+                    WHERE account_id = ? AND created_at >= datetime(?, 'unixepoch')`
+                )
+                .bind(accountId, accountId, sinceTimestamp)
+                .first<any>();
+            const top = await this.db
+                .prepare(
+                    `SELECT content, engagement_score FROM post_history
+                    WHERE account_id = ? AND engagement_score > 0 AND created_at >= datetime(?, 'unixepoch')
+                    ORDER BY engagement_score DESC LIMIT 1`
+                )
+                .bind(accountId, sinceTimestamp)
+                .first<any>();
+
+            return {
+                posts: Number(totals?.posts) || 0,
+                reactions: Number(totals?.reactions) || 0,
+                reposts: Number(totals?.reposts) || 0,
+                replies: Number(totals?.replies) || 0,
+                zaps: Number(totals?.zaps) || 0,
+                zapSats: Number(totals?.zap_sats) || 0,
+                checkedAt: Number(totals?.checked_at) || undefined,
+                topPost: top
+                    ? { content: top.content, score: Number(top.engagement_score) }
+                    : undefined,
+            };
+        } catch (error) {
+            console.error(`Failed to load engagement stats for account ${accountId}:`, error);
             return undefined;
         }
     }

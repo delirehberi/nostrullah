@@ -75,3 +75,50 @@ describe('StorageService shared items', () => {
         ).resolves.toBeUndefined();
     });
 });
+
+describe('StorageService engagement', () => {
+    it('loads recent published posts with unix timestamps', async () => {
+        const { db, statements } = createDbMock({
+            rows: [{ event_id: 'e1', created_ts: '1790000000' }],
+        });
+        const storage = new StorageService({ DB: db } as any);
+
+        const posts = await storage.getPostsForEngagement(3, 1_789_000_000, 50);
+
+        expect(posts).toEqual([{ eventId: 'e1', createdAt: 1_790_000_000 }]);
+        expect(statements[0].sql).toContain('event_id IS NOT NULL');
+        expect(statements[0].values).toEqual([3, 1_789_000_000, 50]);
+    });
+
+    it('saves engagement counts and score by event id', async () => {
+        const { db, statements } = createDbMock();
+        const storage = new StorageService({ DB: db } as any);
+
+        await storage.saveEngagement(
+            3,
+            'e1',
+            { reactions: 2, reposts: 1, replies: 0, zaps: 1, zapSats: 21 },
+            7,
+            NOW_SECONDS
+        );
+
+        expect(statements[0].sql).toContain('UPDATE post_history');
+        expect(statements[0].values).toEqual([2, 1, 0, 1, 21, 7, NOW_SECONDS, 3, 'e1']);
+    });
+
+    it('returns top posts and format performance, empty when columns are missing', async () => {
+        const { db } = createDbMock({
+            rows: [{ content: 'viral', format: 'tip', engagement_score: 9 }],
+        });
+        const storage = new StorageService({ DB: db } as any);
+
+        await expect(storage.getTopPosts(3, 0, 3)).resolves.toEqual(['viral']);
+        await expect(storage.getFormatPerformance(3, 0)).resolves.toEqual([
+            { format: 'tip', score: 9 },
+        ]);
+
+        const failing = new StorageService({ DB: createDbMock({ fail: true }).db } as any);
+        await expect(failing.getTopPosts(3, 0, 3)).resolves.toEqual([]);
+        await expect(failing.getFormatPerformance(3, 0)).resolves.toEqual([]);
+    });
+});
