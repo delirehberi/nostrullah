@@ -8,6 +8,7 @@ import { generateValidatedPost } from './post-generation';
 import { ResourceService } from './resources';
 import { ContentSimilarityService } from './content-similarity';
 import { ControlProcessor } from './control';
+import { buildHashtagTags } from './hashtags';
 
 const PROMPT_HISTORY_LIMIT = 20;
 const SIMILARITY_HISTORY_LIMIT = 30;
@@ -59,7 +60,8 @@ export default {
             try {
                 const publishResult = await NostrService.publishEvent(
                     { ...account, relays: targetRelays },
-                    content
+                    content,
+                    { extraTags: buildHashtagTags(content) }
                 );
                 if (publishResult.published) {
                     console.log(
@@ -241,7 +243,8 @@ async function processScheduledAccount(options: {
 
         const publishResult = await NostrService.publishEvent(
             { ...account, relays: targetRelays },
-            content
+            content,
+            { extraTags: buildHashtagTags(content) }
         );
 
         if (publishResult.published) {

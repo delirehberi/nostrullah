@@ -173,8 +173,8 @@ describe('runScheduled control ordering', () => {
             ];
         });
         generateValidatedPost.mockResolvedValue({
-            content: 'fresh generated post',
-            attempts: [{ content: 'fresh generated post', invalidUrls: [] }],
+            content: 'fresh generated post #Bilim #YapayZeka',
+            attempts: [{ content: 'fresh generated post #Bilim #YapayZeka', invalidUrls: [] }],
         });
 
         const { runScheduled } = await import('../src/index');
@@ -204,7 +204,21 @@ describe('runScheduled control ordering', () => {
             })
         );
         expect(updateLastRun).toHaveBeenCalledWith(2);
-        expect(addPostToHistory).toHaveBeenCalledWith(2, 'fresh generated post', 'post-1');
+        expect(publishEvent).toHaveBeenCalledWith(
+            expect.anything(),
+            'fresh generated post #Bilim #YapayZeka',
+            {
+                extraTags: [
+                    ['t', 'bilim'],
+                    ['t', 'yapayzeka'],
+                ],
+            }
+        );
+        expect(addPostToHistory).toHaveBeenCalledWith(
+            2,
+            'fresh generated post #Bilim #YapayZeka',
+            'post-1'
+        );
         expect(fetchResources).toHaveBeenCalledWith(state.data_resources, {
             excludeUrls: new Set(['https://example.com/old/']),
         });
