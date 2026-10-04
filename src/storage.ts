@@ -8,6 +8,7 @@ import {
     FormatPerformance,
 } from './engagement';
 import { ScheduleSettings, SchedulerService } from './scheduler';
+import { RunOutcome, RunTraceDetails, RunTraceRecord } from './run-trace';
 
 export interface ProcessedControlEventRecord {
     eventId: string;
@@ -20,10 +21,28 @@ export interface ProcessedControlEventRecord {
     eventCreatedAt: number;
 }
 
+export interface RunLogFilter {
+    accountId?: number;
+    outcome?: RunOutcome;
+    /** Leave out skipped (not due) runs; ignored when `outcome` is set. */
+    excludeSkipped?: boolean;
+    limit: number;
+    offset?: number;
+}
+
+export interface RunOutcomeCount {
+    accountId: number | null;
+    accountName: string | null;
+    outcome: RunOutcome;
+    count: number;
+}
+
 export class StorageService implements EngagementStore {
     private db: D1Database;
     private static readonly DEFAULT_POST_HISTORY_LIMIT = 20;
     private static readonly SHARED_ITEM_RETENTION_SECONDS = 90 * 24 * 60 * 60;
+    static readonly RUN_LOG_RETENTION_SECONDS = 30 * 24 * 60 * 60;
+    private static readonly LOGIN_EVENT_RETENTION_SECONDS = 24 * 60 * 60;
 
     constructor(env: Env) {
         this.db = env.DB;
@@ -462,4 +481,219 @@ export class StorageService implements EngagementStore {
             .bind(...values)
             .run();
     }
+
+    /**
+     * Stores a run trace. Failures (e.g. migration 0006 not applied) are logged and
+     * never interrupt posting.
+     */
+    async saveRunLog(record: RunTraceRecord): Promise<void> {
+        try {
+            await this.db
+                .prepare(
+                    `INSERT OR REPLACE INTO run_log (
+                        id, account_id, account_name, started_at, duration_ms, outcome,
+                        summary, post_format, event_id, details
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                )
+                .bind(
+                    record.id,
+                    record.accountId ?? null,
+                    record.accountName || null,
+                    record.startedAt,
+                    record.durationMs,
+                    record.outcome,
+                    record.summary,
+                    record.postFormat || null,
+                    record.eventId || null,
+                    JSON.stringify(record.details)
+                )
+                .run();
+        } catch (error) {
+            console.error(`Failed to save run log ${record.id}:`, error);
+        }
+    }
+
+    /**
+     * Adds the outcome of a queued publish retry to its run trace.
+     */
+    async recordRunRetry(
+        runId: string,
+        retry: NonNullable<RunTraceDetails['retry']>
+    ): Promise<void> {
+        try {
+            const run = await this.getRun(runId);
+            if (!run) return;
+
+            run.details.retry = retry;
+            const outcome: RunOutcome = retry.published ? 'published' : run.outcome;
+            const summary = retry.published ? `${run.summary} → published on retry` : run.summary;
+            await this.db
+                .prepare('UPDATE run_log SET outcome = ?, summary = ?, details = ? WHERE id = ?')
+                .bind(outcome, summary, JSON.stringify(run.details), runId)
+                .run();
+        } catch (error) {
+            console.error(`Failed to record retry for run ${runId}:`, error);
+        }
+    }
+
+    async getRun(runId: string): Promise<RunTraceRecord | undefined> {
+        const row = await this.db
+            .prepare('SELECT * FROM run_log WHERE id = ?')
+            .bind(runId)
+            .first<any>();
+        return row ? mapRunLogRow(row) : undefined;
+    }
+
+    /** Runs newest first, optionally filtered by account and outcome. */
+    async listRuns(filter: RunLogFilter): Promise<RunTraceRecord[]> {
+        const conditions: string[] = [];
+        const values: Array<string | number> = [];
+
+        if (filter.accountId !== undefined) {
+            conditions.push('account_id = ?');
+            values.push(filter.accountId);
+        }
+        if (filter.outcome) {
+            conditions.push('outcome = ?');
+            values.push(filter.outcome);
+        } else if (filter.excludeSkipped) {
+            conditions.push("outcome != 'skipped'");
+        }
+
+        const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const { results } = await this.db
+            .prepare(
+                `SELECT * FROM run_log ${where} ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?`
+            )
+            .bind(...values, filter.limit, filter.offset || 0)
+            .all();
+        return results.map(mapRunLogRow);
+    }
+
+    /** Number of runs per account and outcome since `sinceTimestamp`. */
+    async getRunOutcomeCounts(sinceTimestamp: number): Promise<RunOutcomeCount[]> {
+        const { results } = await this.db
+            .prepare(
+                `SELECT account_id, MAX(account_name) AS account_name, outcome, COUNT(*) AS count
+                FROM run_log WHERE started_at >= ?
+                GROUP BY account_id, outcome`
+            )
+            .bind(sinceTimestamp)
+            .all();
+        return results.map((r: any) => ({
+            accountId: r.account_id ?? null,
+            accountName: r.account_name ?? null,
+            outcome: r.outcome,
+            count: Number(r.count) || 0,
+        }));
+    }
+
+    /** Traces of runs since `sinceTimestamp` that got as far as generating a post. */
+    async getGeneratedRunDetails(
+        sinceTimestamp: number
+    ): Promise<Array<{ accountId: number | null; postFormat?: string; details: RunTraceDetails }>> {
+        const { results } = await this.db
+            .prepare(
+                `SELECT account_id, post_format, details FROM run_log
+                WHERE started_at >= ? AND outcome != 'skipped'`
+            )
+            .bind(sinceTimestamp)
+            .all();
+        return results.map((r: any) => ({
+            accountId: r.account_id ?? null,
+            postFormat: r.post_format || undefined,
+            details: parseRunDetails(r.details),
+        }));
+    }
+
+    /**
+     * Deletes run traces past the retention window, expired debug sessions and old
+     * login event ids. Failures are logged only.
+     */
+    async pruneDebugData(now: Date = new Date()): Promise<void> {
+        const nowSeconds = Math.floor(now.getTime() / 1000);
+        try {
+            await this.db
+                .prepare('DELETE FROM run_log WHERE started_at < ?')
+                .bind(nowSeconds - StorageService.RUN_LOG_RETENTION_SECONDS)
+                .run();
+            await this.db
+                .prepare('DELETE FROM debug_sessions WHERE expires_at < ?')
+                .bind(nowSeconds)
+                .run();
+            await this.db
+                .prepare('DELETE FROM debug_login_events WHERE created_at < ?')
+                .bind(nowSeconds - StorageService.LOGIN_EVENT_RETENTION_SECONDS)
+                .run();
+        } catch (error) {
+            console.error('Failed to prune debug data:', error);
+        }
+    }
+
+    async createDebugSession(
+        tokenHash: string,
+        pubkey: string,
+        createdAt: number,
+        expiresAt: number
+    ): Promise<void> {
+        await this.db
+            .prepare(
+                'INSERT INTO debug_sessions (token_hash, pubkey, created_at, expires_at) VALUES (?, ?, ?, ?)'
+            )
+            .bind(tokenHash, pubkey, createdAt, expiresAt)
+            .run();
+    }
+
+    /** Pubkey of an unexpired session, if any. */
+    async getDebugSessionPubkey(tokenHash: string, now: number): Promise<string | undefined> {
+        const row = await this.db
+            .prepare('SELECT pubkey FROM debug_sessions WHERE token_hash = ? AND expires_at > ?')
+            .bind(tokenHash, now)
+            .first<{ pubkey: string }>();
+        return row?.pubkey;
+    }
+
+    async deleteDebugSession(tokenHash: string): Promise<void> {
+        await this.db
+            .prepare('DELETE FROM debug_sessions WHERE token_hash = ?')
+            .bind(tokenHash)
+            .run();
+    }
+
+    /**
+     * Marks a login event id as used. Returns false when it was already used (replay).
+     */
+    async claimDebugLoginEvent(eventId: string, now: number): Promise<boolean> {
+        const result = await this.db
+            .prepare(
+                'INSERT OR IGNORE INTO debug_login_events (event_id, created_at) VALUES (?, ?)'
+            )
+            .bind(eventId, now)
+            .run();
+        return (result.meta?.changes ?? 0) === 1;
+    }
+}
+
+function parseRunDetails(value: unknown): RunTraceDetails {
+    if (typeof value !== 'string') return {};
+    try {
+        return JSON.parse(value) as RunTraceDetails;
+    } catch {
+        return {};
+    }
+}
+
+function mapRunLogRow(row: any): RunTraceRecord {
+    return {
+        id: row.id,
+        accountId: row.account_id ?? undefined,
+        accountName: row.account_name || undefined,
+        startedAt: Number(row.started_at),
+        durationMs: Number(row.duration_ms) || 0,
+        outcome: row.outcome,
+        summary: row.summary || '',
+        postFormat: row.post_format || undefined,
+        eventId: row.event_id || undefined,
+        details: parseRunDetails(row.details),
+    };
 }

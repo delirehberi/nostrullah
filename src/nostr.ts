@@ -17,10 +17,18 @@ export interface PublishEventOptions {
     extraTags?: string[][];
 }
 
+export interface RelayPublishResult {
+    relay: string;
+    ok: boolean;
+    error?: string;
+}
+
 export interface PublishEventResult {
     eventId: string;
     published: boolean;
     successCount: number;
+    /** Outcome per relay, in the order of `account.relays`. */
+    relays?: RelayPublishResult[];
 }
 
 export interface NostrQueryFilter {
@@ -63,23 +71,31 @@ export class NostrService {
 
         const signedEvent = finalizeEvent(eventTemplate, privateKeyBytes);
 
-        let successCount = 0;
-        const publishPromises = account.relays.map(async (relayUrl) => {
-            try {
-                const relay = await Relay.connect(relayUrl);
-                await relay.publish(signedEvent);
-                relay.close();
-                successCount++;
-            } catch (e) {
-                console.error(`Failed to publish to ${relayUrl}:`, e);
+        const publishPromises = account.relays.map(
+            async (relayUrl): Promise<RelayPublishResult> => {
+                try {
+                    const relay = await Relay.connect(relayUrl);
+                    await relay.publish(signedEvent);
+                    relay.close();
+                    return { relay: relayUrl, ok: true };
+                } catch (e) {
+                    console.error(`Failed to publish to ${relayUrl}:`, e);
+                    return {
+                        relay: relayUrl,
+                        ok: false,
+                        error: e instanceof Error ? e.message : String(e),
+                    };
+                }
             }
-        });
+        );
 
-        await Promise.allSettled(publishPromises);
+        const relays = await Promise.all(publishPromises);
+        const successCount = relays.filter((result) => result.ok).length;
         return {
             eventId: signedEvent.id,
             published: successCount > 0,
             successCount,
+            relays,
         };
     }
 

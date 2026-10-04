@@ -118,6 +118,18 @@ As long as your Nostr public key is in the account's `control_admin_pubkeys` all
 
 The bot will interpret the instruction, apply the changes to the database, and reply to your note confirming the applied actions.
 
+## Debug Page
+
+Every scheduled account run is logged to the `run_log` D1 table (apply migration `0006_debug_page.sql`). Open `https://<your-worker>/debug` to see, per run:
+
+- why it ran or was skipped (frequency, timezone, active hours, next slot)
+- which resources were tried and which item was used
+- how the post format was chosen (weights, previous format)
+- every generated draft and why it was rejected (similarity, length, prompt leak, invalid URLs)
+- which relays accepted the event, with a link to the note
+
+Log in with a NIP-07 browser extension (Alby, nos2x, ...). Only the npub in `DEBUG_ADMIN_NPUB` (`src/debug-auth.ts`) is accepted. Raw JSON for a run is at `/debug/run/<id>`. Traces are kept for 30 days.
+
 ## Running & Deployment
 
 ### Local Development

@@ -17,6 +17,8 @@ const getPostsForEngagement = vi.fn();
 const saveEngagement = vi.fn();
 const generateValidatedPost = vi.fn();
 const publishEvent = vi.fn();
+const saveRunLog = vi.fn();
+const pruneDebugData = vi.fn();
 
 vi.mock('../src/config', () => ({
     getAccounts,
@@ -44,6 +46,9 @@ vi.mock('../src/storage', () => ({
         updateEngagementCheckedAt = updateEngagementCheckedAt;
         getPostsForEngagement = getPostsForEngagement;
         saveEngagement = saveEngagement;
+        saveRunLog = saveRunLog;
+        pruneDebugData = pruneDebugData;
+        getNextRunTimestamp = () => Date.now() + 60 * 60 * 1000;
     },
 }));
 
@@ -89,6 +94,8 @@ describe('runScheduled control ordering', () => {
             updateEngagementCheckedAt,
             getPostsForEngagement,
             saveEngagement,
+            saveRunLog,
+            pruneDebugData,
         ]) {
             mock.mockReset();
         }
@@ -299,6 +306,23 @@ describe('runScheduled control ordering', () => {
             })
         );
         expect(addPostToHistory).toHaveBeenCalledWith(3, 'İpucu: yedek alın.', 'post-1', 'tip');
+        expect(saveRunLog).toHaveBeenCalledWith(
+            expect.objectContaining({
+                accountId: 3,
+                outcome: 'published',
+                postFormat: 'tip',
+                eventId: 'post-1',
+                summary: 'Published tip without resource context',
+            })
+        );
+        const trace = saveRunLog.mock.calls[0][0];
+        expect(trace.details.format).toMatchObject({
+            enabled: true,
+            weightSource: 'custom',
+            lastFormat: 'question',
+            selected: 'tip',
+        });
+        expect(pruneDebugData).toHaveBeenCalledTimes(1);
         // Engagement collection was attempted for the account (throttle timestamp set)
         expect(updateEngagementCheckedAt).toHaveBeenCalledWith(3, expect.any(Number));
     });
@@ -356,5 +380,86 @@ describe('runScheduled control ordering', () => {
         expect(getFormatPerformance).toHaveBeenCalledWith(4, expect.any(Number));
         // Checked recently: no new engagement collection
         expect(updateEngagementCheckedAt).not.toHaveBeenCalled();
+    });
+
+    it('logs skipped runs with the next slot', async () => {
+        const account = {
+            id: 5,
+            name: 'Bot',
+            privateKey: '1'.repeat(64),
+            relays: ['wss://relay.example'],
+            categories: ['technology'],
+            frequency: 'daily',
+            data_resources: [],
+            is_active: true,
+            last_run_at: 0,
+        };
+        getAccounts.mockResolvedValue([account]);
+        processAccounts.mockResolvedValue(undefined);
+        shouldRun.mockReturnValue(false);
+
+        const { runScheduled } = await import('../src/index');
+        const pending: Promise<void>[] = [];
+        await runScheduled(
+            {} as any,
+            { AI: { run: vi.fn() } as any, DB: {} as any } as any,
+            { waitUntil: (promise: Promise<void>) => pending.push(promise) } as any
+        );
+        await Promise.all(pending);
+
+        expect(generateValidatedPost).not.toHaveBeenCalled();
+        expect(saveRunLog).toHaveBeenCalledTimes(1);
+        const trace = saveRunLog.mock.calls[0][0];
+        expect(trace.outcome).toBe('skipped');
+        expect(trace.details.schedule).toMatchObject({ due: false, frequency: 'daily' });
+        expect(trace.details.schedule.nextRunAt).toEqual(expect.any(Number));
+    });
+
+    it('logs the stage and message when a run fails', async () => {
+        const account = {
+            id: 6,
+            name: 'Bot',
+            privateKey: '1'.repeat(64),
+            relays: ['wss://relay.example'],
+            categories: ['technology'],
+            frequency: 'daily',
+            data_resources: [{ type: 'rss', url: 'https://example.com/feed.xml' }],
+            prompt_template: 'custom',
+            is_active: true,
+            last_run_at: 0,
+        };
+        getAccounts.mockResolvedValue([account]);
+        processAccounts.mockResolvedValue(undefined);
+        fetchResources.mockResolvedValue({
+            context: 'ctx',
+            sourceUrl: 'https://example.com/new/',
+            attempts: [
+                { resource: 'rss(https://example.com/feed.xml)', status: 'used', durationMs: 5 },
+            ],
+        });
+        generateValidatedPost.mockRejectedValue(new Error('All 3 generation attempts rejected'));
+
+        const { runScheduled } = await import('../src/index');
+        const pending: Promise<void>[] = [];
+        await runScheduled(
+            {} as any,
+            { AI: { run: vi.fn() } as any, DB: {} as any } as any,
+            { waitUntil: (promise: Promise<void>) => pending.push(promise) } as any
+        );
+        await Promise.all(pending);
+
+        expect(publishEvent).not.toHaveBeenCalled();
+        const trace = saveRunLog.mock.calls[0][0];
+        expect(trace.outcome).toBe('error');
+        expect(trace.details.error).toEqual({
+            stage: 'generation',
+            message: 'All 3 generation attempts rejected',
+        });
+        expect(trace.details.resources).toMatchObject({
+            configured: 1,
+            alreadyShared: 1,
+            sourceUrl: 'https://example.com/new/',
+        });
+        expect(trace.details.format).toEqual({ enabled: false });
     });
 });

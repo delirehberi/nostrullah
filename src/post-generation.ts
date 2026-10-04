@@ -32,6 +32,10 @@ export interface GeneratedPostAttempt {
 export interface GeneratedPostResult {
     attempts: GeneratedPostAttempt[];
     content: string;
+    /** Index in `attempts` of the draft returned as `content`. */
+    selectedAttempt?: number;
+    /** Every draft was rejected; `content` is the best safe fallback. */
+    fallback?: boolean;
 }
 
 export interface GenerateValidatedPostOptions {
@@ -107,6 +111,8 @@ export async function generateValidatedPost(
             return {
                 attempts,
                 content,
+                selectedAttempt: attempts.length - 1,
+                fallback: false,
             };
         }
 
@@ -163,6 +169,8 @@ export async function generateValidatedPost(
     return {
         attempts,
         content: bestAttempt.content,
+        selectedAttempt: attempts.indexOf(bestAttempt),
+        fallback: true,
     };
 }
 

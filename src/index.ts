@@ -10,6 +10,9 @@ import { ContentSimilarityService } from './content-similarity';
 import { ControlProcessor } from './control';
 import { buildHashtagTags } from './hashtags';
 import { SchedulerService } from './scheduler';
+import { RunTrace } from './run-trace';
+import { extractHashtags } from './hashtags';
+import { handleDebugRequest, isDebugPath } from './debug-page';
 import { resolveMaxPostLength } from './post-length';
 import {
     EngagementService,
@@ -39,6 +42,7 @@ export async function runScheduled(
     const controlProcessor = new ControlProcessor(env, storage);
 
     await controlProcessor.processAccounts(allAccounts);
+    ctx.waitUntil(storage.pruneDebugData());
 
     // BUG-13: Derive active accounts from the already-fetched list rather than
     // issuing a second DB query.
@@ -73,19 +77,28 @@ export async function runScheduled(
 export default {
     async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext): Promise<void> {
         for (const message of batch.messages) {
-            const { account, content, targetRelays, sourceUrl, sourceTitle, format } = message.body;
+            const { account, content, targetRelays, sourceUrl, sourceTitle, format, runId } =
+                message.body;
+            const storage = new StorageService(env);
             try {
                 const publishResult = await NostrService.publishEvent(
                     { ...account, relays: targetRelays },
                     content,
                     { extraTags: buildHashtagTags(content) }
                 );
+                if (runId) {
+                    await storage.recordRunRetry(runId, {
+                        at: Math.floor(Date.now() / 1000),
+                        published: publishResult.published,
+                        relays: publishResult.relays || [],
+                    });
+                }
                 if (publishResult.published) {
                     console.log(
                         `Successfully published retried post for ${account.name || 'Unknown'}`
                     );
                     await recordSuccessfulPost(
-                        new StorageService(env),
+                        storage,
                         account.id,
                         content,
                         publishResult.eventId,
@@ -109,6 +122,10 @@ export default {
     },
 
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+        if (isDebugPath(new URL(request.url).pathname)) {
+            return handleDebugRequest(request, env);
+        }
+
         //disable endpoint if reqquest not have querystring of hellofromemre
         if (!request.url.includes('1542')) {
             return new Response('Forbidden', {
@@ -196,6 +213,7 @@ async function processScheduledAccount(options: {
     // BUG-02: Instantiate per-account to avoid shared XMLParser state across
     // concurrent waitUntil tasks.
     const resourceService = new ResourceService();
+    const trace = new RunTrace(account);
 
     try {
         const pubKey = NostrService.getPublicKeyFromPrivate(account.privateKey);
@@ -203,41 +221,52 @@ async function processScheduledAccount(options: {
 
         const schedule = SchedulerService.fromAccount(account);
         if (!storage.shouldRun(lastRun, schedule)) {
-            const nextRunAt = new Date(
-                storage.getNextRunTimestamp(lastRun, schedule)
-            ).toISOString();
+            const nextRunAtMs = storage.getNextRunTimestamp(lastRun, schedule);
+            trace.recordSchedule(false, nextRunAtMs);
             console.log(
                 `Skipping account ${pubKey.slice(0, 8)}... - not time yet ` +
                     `(frequency=${account.frequency}, timezone=${account.timezone}, ` +
-                    `activeHours=${account.active_hours || 'all day'}, lastRun=${lastRun}, nextRunAt=${nextRunAt})`
+                    `activeHours=${account.active_hours || 'all day'}, lastRun=${lastRun}, ` +
+                    `nextRunAt=${new Date(nextRunAtMs).toISOString()})`
             );
             return;
         }
+        trace.recordSchedule(true);
 
         console.log(`Processing account ${pubKey.slice(0, 8)}...`);
 
         if (!account.id) {
             console.error(`Account ${pubKey.slice(0, 8)} has no ID!`);
+            trace.finish('error', 'Account has no id');
             return;
         }
 
+        trace.stage = 'history';
         const history = await storage.getPostHistory(account.id, SIMILARITY_HISTORY_LIMIT);
         const promptHistory = history.slice(0, PROMPT_HISTORY_LIMIT);
 
+        trace.stage = 'resources';
         let resourceContext: ResourceContext = { context: '' };
         if (account.data_resources && account.data_resources.length > 0) {
             console.log(`Fetching resources for ${pubKey.slice(0, 8)}...`);
+            const sharedUrls = await storage.getSharedUrls(account.id);
             resourceContext = await resourceService.fetchResources(account.data_resources, {
-                excludeUrls: await storage.getSharedUrls(account.id),
+                excludeUrls: sharedUrls,
             });
+            trace.recordResources(account.data_resources.length, sharedUrls.size, resourceContext);
         }
         const context = resourceContext.context;
-        const format = await choosePostFormat(storage, account, resourceContext);
+
+        trace.stage = 'format';
+        const format = await choosePostFormat(storage, account, resourceContext, trace);
         const topPosts = await loadTopPosts(storage, account);
+        trace.details.history = { recentPosts: history.length, topPosts };
         if (format) {
             console.log(`Using post format ${format} for ${pubKey.slice(0, 8)}...`);
         }
 
+        trace.stage = 'generation';
+        const maxLength = resolveMaxPostLength(account.max_post_length, env.MAX_POST_LENGTH);
         const generatedPost = await generateValidatedPost({
             generator,
             categories: account.categories,
@@ -247,10 +276,11 @@ async function processScheduledAccount(options: {
             promptTemplate: account.prompt_template,
             personality: account.personality,
             formatInstruction: format ? POST_FORMAT_INSTRUCTIONS[format] : undefined,
-            maxLength: resolveMaxPostLength(account.max_post_length, env.MAX_POST_LENGTH),
+            maxLength,
             topPosts,
             similarityChecker: similarityService,
         });
+        trace.recordGeneration(generatedPost, maxLength);
         const content = generatedPost.content;
 
         console.log(`Generated content: ${content}`);
@@ -260,6 +290,7 @@ async function processScheduledAccount(options: {
             );
         }
 
+        trace.stage = 'publish';
         let targetRelays = account.relays;
         const discoveredRelays = await NostrService.discoverRelays(pubKey, [
             ...targetRelays,
@@ -281,9 +312,19 @@ async function processScheduledAccount(options: {
             content,
             { extraTags: buildHashtagTags(content) }
         );
+        trace.details.publish = {
+            configuredRelays: account.relays,
+            discoveredRelays,
+            hashtags: extractHashtags(content),
+            eventId: publishResult.eventId,
+            relays: publishResult.relays || [],
+            queuedForRetry: false,
+        };
 
         if (publishResult.published) {
             console.log(`Successfully published for ${pubKey.slice(0, 8)}...`);
+            trace.finish('published', describePublishedRun(format, resourceContext, generatedPost));
+            trace.stage = 'record';
             await recordSuccessfulPost(
                 storage,
                 account.id,
@@ -294,6 +335,7 @@ async function processScheduledAccount(options: {
             );
         } else {
             console.error(`Failed to publish for ${pubKey.slice(0, 8)}... Enqueuing for retry.`);
+            trace.finish('failed', 'No relay accepted the post');
             if (env.FAILED_POSTS) {
                 await env.FAILED_POSTS.send({
                     account,
@@ -302,12 +344,38 @@ async function processScheduledAccount(options: {
                     sourceUrl: resourceContext.sourceUrl,
                     sourceTitle: resourceContext.sourceTitle,
                     format,
+                    runId: trace.id,
                 });
+                trace.details.publish.queuedForRetry = true;
+                trace.finish('queued', 'No relay accepted the post; queued for retry');
             }
         }
     } catch (error) {
         console.error('Error processing account:', error);
+        trace.fail(error);
+    } finally {
+        await storage.saveRunLog(trace.toRecord());
     }
+}
+
+/**
+ * One-line reason for a published run, e.g. "Published tip from rss(...) (2 drafts)".
+ */
+function describePublishedRun(
+    format: PostFormat | undefined,
+    resourceContext: ResourceContext,
+    generatedPost: { attempts: unknown[]; fallback?: boolean }
+): string {
+    const used = resourceContext.attempts?.find((attempt) => attempt.status === 'used');
+    const parts = [`Published ${format || 'post'}`];
+    parts.push(used ? `from ${used.resource}` : 'without resource context');
+    if (generatedPost.attempts.length > 1) {
+        parts.push(`(${generatedPost.attempts.length} drafts)`);
+    }
+    if (generatedPost.fallback) {
+        parts.push('using fallback draft');
+    }
+    return parts.join(' ');
 }
 
 /**
@@ -347,9 +415,11 @@ async function refreshEngagement(
 async function choosePostFormat(
     storage: StorageService,
     account: NostrAccount,
-    resourceContext: ResourceContext
+    resourceContext: ResourceContext,
+    trace?: RunTrace
 ): Promise<PostFormat | undefined> {
     if (!account.id || !isFormatRotationEnabled(account.prompt_template)) {
+        if (trace) trace.details.format = { enabled: false };
         return undefined;
     }
 
@@ -362,11 +432,23 @@ async function choosePostFormat(
                 Math.floor(Date.now() / 1000) - TOP_POSTS_LOOKBACK_SECONDS
             )
         );
-
-    return selectPostFormat(weights, {
+    const lastFormat = await storage.getLastPostFormat(account.id);
+    const selected = selectPostFormat(weights, {
         hasLinkContext: Boolean(resourceContext.sourceUrl),
-        lastFormat: await storage.getLastPostFormat(account.id),
+        lastFormat,
     });
+
+    if (trace) {
+        trace.details.format = {
+            enabled: true,
+            weightSource: account.post_formats ? 'custom' : 'engagement',
+            weights,
+            lastFormat,
+            hasLinkContext: Boolean(resourceContext.sourceUrl),
+            selected,
+        };
+    }
+    return selected;
 }
 
 /**
