@@ -272,6 +272,8 @@ export class EngagementService {
 
         // Claim a short retry slot first: if anything below fails, the account is
         // retried on the next cron run instead of after the full 6-hour interval.
+        // The stored time is backdated so that `now - checked_at` reaches the 6-hour
+        // interval 50 minutes from now: (T + 50m) - (T - 6h + 50m) = 6h.
         // This write also fails fast (before any relay query) when the column is missing.
         await this.storage.updateEngagementCheckedAt(
             account.id,
