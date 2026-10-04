@@ -93,15 +93,9 @@ describe('ContentGenerator format instructions', () => {
 
     it('appends the format instruction when the template has no placeholder', async () => {
         const { generator, userPrompt } = createGenerator();
-        await generator.generatePost(
-            ['bilim'],
-            [],
-            '',
-            undefined,
-            undefined,
-            undefined,
-            POST_FORMAT_INSTRUCTIONS.tip
-        );
+        await generator.generatePost(['bilim'], [], '', undefined, undefined, {
+            formatInstruction: POST_FORMAT_INSTRUCTIONS.tip,
+        });
 
         expect(userPrompt()).toContain(
             `Post format for this post: ${POST_FORMAT_INSTRUCTIONS.tip}`
@@ -116,8 +110,7 @@ describe('ContentGenerator format instructions', () => {
             '',
             'Bilim hakkında yaz.\n$$FORMAT$$\nTürkçe yaz.',
             undefined,
-            undefined,
-            POST_FORMAT_INSTRUCTIONS.question
+            { formatInstruction: POST_FORMAT_INSTRUCTIONS.question }
         );
 
         expect(userPrompt()).toContain(`Post format: ${POST_FORMAT_INSTRUCTIONS.question}`);

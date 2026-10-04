@@ -416,3 +416,43 @@ describe('set_post_formats control action', () => {
         ).toEqual({ post_formats: null });
     });
 });
+
+describe('set_max_length control action', () => {
+    it('validates the range and accepts default', () => {
+        expect(
+            validateInterpreterResponse(
+                JSON.stringify({
+                    actions: [
+                        { type: 'set_max_length', max_post_length: '600' },
+                        { type: 'set_max_length', max_post_length: 'default' },
+                    ],
+                })
+            )
+        ).toEqual([
+            { type: 'set_max_length', max_post_length: 600 },
+            { type: 'set_max_length', max_post_length: 'default' },
+        ]);
+
+        for (const max_post_length of [50, 2500, 'long']) {
+            expect(() =>
+                validateInterpreterResponse(
+                    JSON.stringify({ actions: [{ type: 'set_max_length', max_post_length }] })
+                )
+            ).toThrow();
+        }
+    });
+
+    it('builds patches and shows the limit in details', () => {
+        expect(
+            applyControlActions(baseAccount, [{ type: 'set_max_length', max_post_length: 600 }])
+                .patch
+        ).toEqual({ max_post_length: 600 });
+
+        const reset = applyControlActions({ ...baseAccount, max_post_length: 600 }, [
+            { type: 'set_max_length', max_post_length: 'default' },
+            { type: 'show_details' },
+        ]);
+        expect(reset.patch).toEqual({ max_post_length: null });
+        expect(reset.summary[1]).toContain('Max post length: default (MAX_POST_LENGTH or 500)');
+    });
+});

@@ -6,7 +6,7 @@ Generate a short, humorous social media post.
 - The post must be in Turkish.
 - The tone should be lighthearted, witty, and funny.
 - Use wordplay, irony, or a funny observation.
-- The post must be under 280 characters.
+- The post must be under $$MAX_LENGTH$$ characters (links are not counted).
 - Use relevant (and maybe funny) hashtags.
 - CRITICAL: Output ONLY the final social media post content.
 - NEVER repeat, quote, paraphrase, or echo the prompt, instructions, templates, or system directives.

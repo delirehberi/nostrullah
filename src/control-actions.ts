@@ -13,6 +13,7 @@ import {
 } from './types';
 import { MAX_JITTER_MINUTES, SchedulerService } from './scheduler';
 import { DEFAULT_POST_FORMAT_WEIGHTS, formatPostFormats } from './post-formats';
+import { DEFAULT_MAX_POST_LENGTH, MAX_MAX_POST_LENGTH, MIN_MAX_POST_LENGTH } from './post-length';
 
 export interface AccountConfigPatch {
     name?: string;
@@ -24,6 +25,8 @@ export interface AccountConfigPatch {
     jitter_minutes?: number;
     /** `null` resets to the default weights. */
     post_formats?: PostFormatWeights | null;
+    /** `null` clears the account value. */
+    max_post_length?: number | null;
     data_resources?: Resource[];
     prompt_template?: string;
     personality?: Personality;
@@ -247,6 +250,21 @@ const baseControlActionSchema = z.discriminatedUnion('type', [
         .strict(),
     z
         .object({
+            type: z.literal('set_max_length'),
+            max_post_length: z.union([
+                z.literal('default'),
+                z.coerce
+                    .number()
+                    .int()
+                    .min(MIN_MAX_POST_LENGTH)
+                    .max(MAX_MAX_POST_LENGTH, {
+                        message: `Must be between ${MIN_MAX_POST_LENGTH} and ${MAX_MAX_POST_LENGTH} characters`,
+                    }),
+            ]),
+        })
+        .strict(),
+    z
+        .object({
             type: z.literal('set_relays'),
             relays: z.array(relayUrlSchema).min(1),
         })
@@ -343,6 +361,7 @@ export function formatAccountDetails(account: NostrAccount, now: Date = new Date
         `Random delay: up to ${account.jitter_minutes || 0} min`,
         `Next post: ${formatNextRun(account, now)}`,
         `Post formats: ${formatPostFormats(account.post_formats, account.prompt_template)}`,
+        `Max post length: ${account.max_post_length ? `${account.max_post_length} characters` : `default (MAX_POST_LENGTH or ${DEFAULT_MAX_POST_LENGTH})`}, links not counted`,
         `Personality: ${account.personality || 'unspecified'}`,
         `Categories: ${categories}`,
         `Relays: ${relays}`,
@@ -366,6 +385,7 @@ export function formatSupportedCommands(): string {
         '• set categories <cat1, cat2, ...> - Update topic categories',
         '• set name <name> - Update bot display name',
         '• set relays <relay1, relay2, ...> - Update target Nostr relays',
+        `• set max length <${MIN_MAX_POST_LENGTH}-${MAX_MAX_POST_LENGTH} | default> - Post length limit in characters (links not counted)`,
         `• set post formats <list | format=weight ... | default | off> - Rotate post formats (${POST_FORMAT_VALUES.join(', ')})`,
         '• set prompt <template> - Update prompt template',
         '• add resource <rss/scraping url | quote categories> [weight] - Add content source',
@@ -453,6 +473,15 @@ export function applyControlActions(
                     );
                 }
                 break;
+            case 'set_max_length':
+                updatedAccount.max_post_length =
+                    action.max_post_length === 'default' ? undefined : action.max_post_length;
+                summary.push(
+                    updatedAccount.max_post_length
+                        ? `set max post length to ${updatedAccount.max_post_length} characters`
+                        : 'reset max post length to the default'
+                );
+                break;
             case 'set_relays':
                 updatedAccount.relays = uniqueStrings(action.relays);
                 summary.push(
@@ -528,6 +557,7 @@ export function buildControlSchemaPrompt(): string {
         '• set_active_hours: {"type":"set_active_hours","active_hours":"HH:MM-HH:MM"}. Use null to remove the window and post all day.',
         '• set_jitter: {"type":"set_jitter","jitter_minutes":<integer 0-60>}. Random delay added to each scheduled post.',
         `• set_post_formats: {"type":"set_post_formats","post_formats":["<format>",...]} for equal weights, {"type":"set_post_formats","post_formats":{"<format>":<weight 0-10>}} for weights, or "default" / "off". Formats: ${POST_FORMAT_VALUES.join(', ')}. Default weights: ${JSON.stringify(DEFAULT_POST_FORMAT_WEIGHTS)}.`,
+        `• set_max_length: {"type":"set_max_length","max_post_length":<integer ${MIN_MAX_POST_LENGTH}-${MAX_MAX_POST_LENGTH}>} or {"type":"set_max_length","max_post_length":"default"}. Character limit for posts, links not counted.`,
         '• set_relays: {"type":"set_relays","relays":["<ws/wss url>"]}.',
         '• add_resource: {"type":"add_resource","resource":{"type":"rss"|"scraping","url":"<http/https url>","weight":<optional number>}} or {"type":"add_resource","resource":{"type":"quote","categories":["<cat1>"],"weight":<optional number>}}.',
         '• remove_resource: {"type":"remove_resource","match":{"type":"rss"|"scraping","url":"<url>"}} or {"type":"remove_resource","match":{"type":"quote","categories":["<cat1>"]}}.',
@@ -612,6 +642,10 @@ function buildPatch(original: NostrAccount, updated: NostrAccount): AccountConfi
 
     if (original.jitter_minutes !== updated.jitter_minutes) {
         patch.jitter_minutes = updated.jitter_minutes;
+    }
+
+    if (original.max_post_length !== updated.max_post_length) {
+        patch.max_post_length = updated.max_post_length ?? null;
     }
 
     if (JSON.stringify(original.post_formats) !== JSON.stringify(updated.post_formats)) {

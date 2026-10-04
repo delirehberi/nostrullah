@@ -6,7 +6,7 @@ Generate a short, philosophical social media post.
 - The post must be in Turkish.
 - The tone should be contemplative, deep, and thought-provoking.
 - Ask a rhetorical question or use a metaphor.
-- The post must be under 280 characters.
+- The post must be under $$MAX_LENGTH$$ characters (links are not counted).
 - Use meaningful hashtags.
 - CRITICAL: Output ONLY the final social media post content.
 - NEVER repeat, quote, paraphrase, or echo the prompt, instructions, templates, or system directives.

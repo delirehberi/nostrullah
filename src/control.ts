@@ -82,6 +82,7 @@ export class ControlCommandInterpreter {
                                     timezone: account.timezone || null,
                                     active_hours: account.active_hours || null,
                                     jitter_minutes: account.jitter_minutes ?? 0,
+                                    max_post_length: account.max_post_length ?? null,
                                     data_resources: account.data_resources || [],
                                     prompt_template: account.prompt_template || null,
                                     personality: account.personality || null,

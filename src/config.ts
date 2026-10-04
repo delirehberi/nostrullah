@@ -60,6 +60,7 @@ export const getAccounts = async (
                     ? DEFAULT_ACTIVE_HOURS
                     : row.active_hours || undefined,
             jitter_minutes: row.jitter_minutes ?? DEFAULT_JITTER_MINUTES,
+            max_post_length: row.max_post_length ?? undefined,
             post_formats: safeParseJson<PostFormatWeights | undefined>(
                 row.post_formats,
                 postFormatsSchema,

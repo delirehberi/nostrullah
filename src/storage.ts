@@ -279,6 +279,11 @@ export class StorageService {
             values.push(patch.jitter_minutes);
         }
 
+        if (Object.prototype.hasOwnProperty.call(patch, 'max_post_length')) {
+            assignments.push('max_post_length = ?');
+            values.push(patch.max_post_length ?? null);
+        }
+
         if (Object.prototype.hasOwnProperty.call(patch, 'post_formats')) {
             assignments.push('post_formats = ?');
             values.push(patch.post_formats ? JSON.stringify(patch.post_formats) : null);

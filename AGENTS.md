@@ -141,6 +141,7 @@ The worker currently depends on these D1 tables:
 - `active_hours` (`HH:MM-HH:MM` in `timezone`, default `07:00-23:00`; `NULL` = all day)
 - `jitter_minutes` (0-60, default `15`)
 - `post_formats` as JSON text (format → weight; `NULL` = defaults, `{}` = rotation off)
+- `max_post_length` (100-2000 characters, links not counted; `NULL` = `MAX_POST_LENGTH` env var or 500)
 
 Frequency presets (in the account's timezone): `hourly`, `every_2_hours`, `twice_a_day` (09:00 and 18:00), `daily` (09:00); any 5-field cron expression is also accepted.
 
@@ -232,6 +233,9 @@ Prompt templates may contain these placeholders:
 - `$$CATEGORIES$$`
 - `$$POST_HISTORY$$`
 - `$$FORMAT$$` (post format instruction; also opts a custom template into format rotation)
+- `$$MAX_LENGTH$$` (the account's character limit; also used by the personality templates)
+
+Drafts longer than the limit (links not counted, see `src/post-length.ts`) are retried with shortening guidance; if every attempt is too long, the shortest safe draft is published.
 
 Current prompt templates are designed to generate Turkish posts and should stay aligned with the product intent unless the user asks otherwise.
 

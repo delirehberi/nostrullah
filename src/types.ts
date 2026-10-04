@@ -99,6 +99,11 @@ export type ControlAction =
           post_formats: PostFormatWeights | 'default' | 'off';
       }
     | {
+          type: 'set_max_length';
+          /** `default` clears the account value (env var or 500 applies). */
+          max_post_length: number | 'default';
+      }
+    | {
           type: 'set_relays';
           relays: string[];
       }
@@ -148,6 +153,8 @@ export interface NostrAccount {
     jitter_minutes?: number;
     /** Post format weights; unset = defaults, empty object = rotation off. */
     post_formats?: PostFormatWeights;
+    /** Post length limit in characters, links excluded; unset = env var or default. */
+    max_post_length?: number;
     control_enabled?: boolean;
     control_admin_pubkeys?: string[];
     control_last_checked_at?: number;

@@ -10,6 +10,7 @@ import { ContentSimilarityService } from './content-similarity';
 import { ControlProcessor } from './control';
 import { buildHashtagTags } from './hashtags';
 import { SchedulerService } from './scheduler';
+import { resolveMaxPostLength } from './post-length';
 import {
     POST_FORMAT_INSTRUCTIONS,
     isFormatRotationEnabled,
@@ -136,6 +137,7 @@ export default {
                     promptTemplate: account.prompt_template,
                     personality: account.personality,
                     formatInstruction: format ? POST_FORMAT_INSTRUCTIONS[format] : undefined,
+                    maxLength: resolveMaxPostLength(account.max_post_length, env.MAX_POST_LENGTH),
                     similarityChecker: similarityService,
                 });
                 const content = generatedPost.content;
@@ -231,6 +233,7 @@ async function processScheduledAccount(options: {
             promptTemplate: account.prompt_template,
             personality: account.personality,
             formatInstruction: format ? POST_FORMAT_INSTRUCTIONS[format] : undefined,
+            maxLength: resolveMaxPostLength(account.max_post_length, env.MAX_POST_LENGTH),
             similarityChecker: similarityService,
         });
         const content = generatedPost.content;

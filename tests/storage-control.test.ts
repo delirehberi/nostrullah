@@ -41,12 +41,14 @@ describe('StorageService control-plane helpers', () => {
             timezone: 'Europe/Berlin',
             active_hours: null,
             jitter_minutes: 0,
+            max_post_length: null,
         });
 
         expect(statements[0].sql).toContain('timezone = ?');
         expect(statements[0].sql).toContain('active_hours = ?');
         expect(statements[0].sql).toContain('jitter_minutes = ?');
-        expect(statements[0].values).toEqual(['Europe/Berlin', null, 0, 7]);
+        expect(statements[0].sql).toContain('max_post_length = ?');
+        expect(statements[0].values).toEqual(['Europe/Berlin', null, 0, null, 7]);
     });
 
     it('serializes account config updates into D1 columns', async () => {

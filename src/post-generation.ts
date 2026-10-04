@@ -2,6 +2,8 @@ import { Personality } from './types';
 import { PostSimilarityChecker, SimilarityMatch } from './content-similarity';
 import { validatePostUrls } from './url-validator';
 import { detectPromptLeakage, PromptLeakageCheckResult } from './prompt-leakage';
+import { countPostLength } from './post-length';
+import type { GeneratePostOptions } from './ai';
 
 const DEFAULT_MAX_GENERATION_ATTEMPTS = 3;
 
@@ -12,8 +14,7 @@ export interface PostGenerator {
         context?: string,
         promptTemplate?: string,
         personality?: Personality,
-        additionalGuidance?: string,
-        formatInstruction?: string
+        options?: GeneratePostOptions
     ): Promise<string>;
 }
 
@@ -22,6 +23,10 @@ export interface GeneratedPostAttempt {
     invalidUrls: string[];
     similarityMatch?: SimilarityMatch;
     promptLeakage?: PromptLeakageCheckResult;
+    /** Character count excluding links. */
+    length: number;
+    /** Over `maxLength`; a soft failure that can still be published as a fallback. */
+    tooLong: boolean;
 }
 
 export interface GeneratedPostResult {
@@ -38,6 +43,8 @@ export interface GenerateValidatedPostOptions {
     personality?: Personality;
     /** Post format instruction, kept the same across retries. */
     formatInstruction?: string;
+    /** Character limit (links excluded). Unset = no length check. */
+    maxLength?: number;
     maxAttempts?: number;
     validateUrls?: (content: string) => Promise<{ valid: boolean; invalidUrls: string[] }>;
     similarityHistory?: string[];
@@ -55,15 +62,18 @@ export async function generateValidatedPost(
     const checkLeakage = options.checkPromptLeakage || detectPromptLeakage;
 
     for (let attemptNumber = 1; attemptNumber <= maxAttempts; attemptNumber++) {
-        const guidance = buildRetryGuidance(attempts);
+        const guidance = buildRetryGuidance(attempts, options.maxLength);
         const content = await options.generator.generatePost(
             options.categories,
             [...(options.previousPosts || []), ...rejectedPosts],
             options.context || '',
             options.promptTemplate,
             options.personality,
-            guidance,
-            options.formatInstruction
+            {
+                additionalGuidance: guidance,
+                formatInstruction: options.formatInstruction,
+                maxLength: options.maxLength,
+            }
         );
         const validation = await validateUrls(content);
         const similarityResult = options.similarityChecker
@@ -73,15 +83,24 @@ export async function generateValidatedPost(
               ])
             : { isTooSimilar: false };
         const leakageResult = checkLeakage(content, options.promptTemplate);
+        const length = countPostLength(content);
+        const tooLong = options.maxLength !== undefined && length > options.maxLength;
 
         attempts.push({
             content,
             invalidUrls: validation.invalidUrls,
             similarityMatch: similarityResult.match,
             promptLeakage: leakageResult,
+            length,
+            tooLong,
         });
 
-        if (validation.valid && !similarityResult.isTooSimilar && !leakageResult.isLeaked) {
+        if (
+            validation.valid &&
+            !similarityResult.isTooSimilar &&
+            !leakageResult.isLeaked &&
+            !tooLong
+        ) {
             return {
                 attempts,
                 content,
@@ -102,6 +121,12 @@ export async function generateValidatedPost(
             );
         }
 
+        if (tooLong) {
+            console.warn(
+                `Generated post rejected for length on attempt ${attemptNumber}: ${length} > ${options.maxLength} characters`
+            );
+        }
+
         if (leakageResult.isLeaked) {
             console.warn(
                 `Generated post rejected for prompt leakage on attempt ${attemptNumber}: ${leakageResult.reason || 'prompt leak detected'}`
@@ -109,13 +134,14 @@ export async function generateValidatedPost(
         }
     }
 
-    // All attempts were rejected. A draft rejected only for similarity is still safe to
-    // publish, so use the least similar one. Drafts that leaked the prompt or contain
-    // invalid URLs are never published: skip this run instead (it is retried on the next
-    // cron tick because last_run_at is not updated).
+    // All attempts were rejected. A draft rejected only for similarity or length is still
+    // safe to publish: prefer drafts within the length limit (least similar first), then
+    // the shortest over-length draft. Drafts that leaked the prompt or contain invalid
+    // URLs are never published: skip this run instead (it is retried on the next cron
+    // tick because last_run_at is not updated).
     const bestAttempt = attempts
         .filter((a) => !a.promptLeakage?.isLeaked && a.invalidUrls.length === 0)
-        .sort((a, b) => (a.similarityMatch?.score ?? 0) - (b.similarityMatch?.score ?? 0))[0];
+        .sort(compareFallbackCandidates)[0];
 
     if (!bestAttempt) {
         throw new Error(
@@ -126,8 +152,9 @@ export async function generateValidatedPost(
 
     console.warn(
         `All ${maxAttempts} generation attempts were rejected. ` +
-            `Publishing the least similar safe candidate ` +
-            `(similarityScore=${bestAttempt.similarityMatch?.score ?? 'n/a'}).`
+            `Publishing the best safe candidate ` +
+            `(similarityScore=${bestAttempt.similarityMatch?.score ?? 'n/a'}, ` +
+            `length=${bestAttempt.length}${bestAttempt.tooLong ? ' over limit' : ''}).`
     );
 
     return {
@@ -136,16 +163,43 @@ export async function generateValidatedPost(
     };
 }
 
-function buildRetryGuidance(attempts: GeneratedPostAttempt[]): string | undefined {
+function compareFallbackCandidates(a: GeneratedPostAttempt, b: GeneratedPostAttempt): number {
+    if (a.tooLong !== b.tooLong) {
+        return a.tooLong ? 1 : -1;
+    }
+    if (a.tooLong) {
+        return a.length - b.length;
+    }
+    return (a.similarityMatch?.score ?? 0) - (b.similarityMatch?.score ?? 0);
+}
+
+function buildRetryGuidance(
+    attempts: GeneratedPostAttempt[],
+    maxLength?: number
+): string | undefined {
     const failedUrls = attempts.filter((attempt) => attempt.invalidUrls.length > 0);
     const similarAttempts = attempts.filter((attempt) => attempt.similarityMatch);
     const leakedAttempts = attempts.filter((attempt) => attempt.promptLeakage?.isLeaked);
+    const longAttempts = attempts.filter((attempt) => attempt.tooLong);
 
-    if (failedUrls.length === 0 && similarAttempts.length === 0 && leakedAttempts.length === 0) {
+    if (
+        failedUrls.length === 0 &&
+        similarAttempts.length === 0 &&
+        leakedAttempts.length === 0 &&
+        longAttempts.length === 0
+    ) {
         return undefined;
     }
 
     const guidance: string[] = [];
+
+    if (longAttempts.length > 0) {
+        const lastLength = longAttempts[longAttempts.length - 1].length;
+        guidance.push(
+            `Your previous draft was ${lastLength} characters (links excluded), which is too long.`,
+            `Rewrite it to be under ${maxLength} characters (links excluded) while keeping the key point.`
+        );
+    }
 
     if (leakedAttempts.length > 0) {
         guidance.push(
