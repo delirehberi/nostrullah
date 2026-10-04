@@ -284,6 +284,8 @@ Sanity-check docs and scripts against the actual code before reusing old wording
 
 - The preview endpoint in `src/index.ts` is intentionally gated by checking whether the request URL contains `1542`.
 
+- Admin control commands are read only from the relays in `CONTROL_RELAY_URLS` (`src/control.ts`): relay.ditto.pub, relay.primal.net, relay.nostr.org.tr, relay.emre.xyz and relay.damus.io. A command published to none of them is never seen.
+
 ## Safety Notes
 
 - Treat `wrangler.toml`, `keys.json`, and anything containing `nsec` or private keys as sensitive.

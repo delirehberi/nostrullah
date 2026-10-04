@@ -17,7 +17,15 @@ import { ENGAGEMENT_LOOKBACK_SECONDS } from './engagement';
 
 const CONTROL_QUERY_LIMIT = 50;
 const CONTROL_LOOKBACK_SECONDS = 300;
-const CONTROL_RELAY_URL = 'wss://relay.emre.xyz';
+// Admin commands are read from all of these relays (deduplicated by event id), so a
+// command is found even if the admin's client did not publish it to every relay.
+export const CONTROL_RELAY_URLS = [
+    'wss://relay.ditto.pub',
+    'wss://relay.primal.net',
+    'wss://relay.nostr.org.tr',
+    'wss://relay.emre.xyz',
+    'wss://relay.damus.io',
+];
 
 interface ManagedAccountContext {
     account: NostrAccount;
@@ -196,7 +204,7 @@ export class ControlProcessor {
         };
 
         try {
-            const events = await this.queryEvents([CONTROL_RELAY_URL], filter);
+            const events = await this.queryEvents(CONTROL_RELAY_URLS, filter);
             let maxSeenTimestamp = currentCursor;
 
             for (const event of events) {

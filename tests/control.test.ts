@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ControlCommandInterpreter, ControlProcessor, resolveTargetAccount } from '../src/control';
+import {
+    CONTROL_RELAY_URLS,
+    ControlCommandInterpreter,
+    ControlProcessor,
+    resolveTargetAccount,
+} from '../src/control';
 import { NostrService } from '../src/nostr';
 import { DEFAULT_AI_MODEL, NostrAccount } from '../src/types';
 
@@ -525,5 +530,60 @@ describe('ControlCommandInterpreter', () => {
                 ],
             })
         );
+    });
+});
+
+describe('ControlProcessor relays', () => {
+    it('reads commands from all control relays', () => {
+        expect(CONTROL_RELAY_URLS).toEqual([
+            'wss://relay.ditto.pub',
+            'wss://relay.primal.net',
+            'wss://relay.nostr.org.tr',
+            'wss://relay.emre.xyz',
+            'wss://relay.damus.io',
+        ]);
+    });
+
+    it('queries every control relay and handles a command returned twice only once', async () => {
+        const account = createAccount();
+        const pubkey = NostrService.getPublicKeyFromPrivate(account.privateKey);
+        const command = createControlEvent({
+            id: 'cmd-1',
+            content: 'show help',
+            created_at: 200,
+            tags: [['p', pubkey]],
+        });
+        const storage = {
+            hasProcessedControlEvent: vi.fn().mockResolvedValue(false),
+            updateControlLastCheckedAt: vi.fn().mockResolvedValue(undefined),
+            updateAccountConfiguration: vi.fn().mockResolvedValue(undefined),
+            recordProcessedControlEvent: vi.fn().mockResolvedValue(undefined),
+            findAccountIdByPostEventId: vi.fn().mockResolvedValue(null),
+        } as any;
+        const interpreter = {
+            interpret: vi.fn().mockResolvedValue([{ type: 'show_help' }]),
+        } as any;
+        const queryEvents = vi.fn().mockResolvedValue([command, { ...command }]);
+        const publishEvent = vi.fn().mockResolvedValue({
+            eventId: 'ack-1',
+            published: true,
+            successCount: 1,
+        });
+        const processor = new ControlProcessor(
+            { AI: { run: vi.fn() } as any, DB: {} as any } as any,
+            storage,
+            { interpreter, publishEvent, queryEvents }
+        );
+
+        await processor.processAccounts([account]);
+
+        expect(queryEvents).toHaveBeenCalledWith(
+            CONTROL_RELAY_URLS,
+            expect.objectContaining({ '#p': [pubkey], authors: [adminPubkey] })
+        );
+        expect(interpreter.interpret).toHaveBeenCalledTimes(1);
+        expect(publishEvent).toHaveBeenCalledTimes(1);
+        expect(storage.recordProcessedControlEvent).toHaveBeenCalledTimes(1);
+        expect(storage.updateControlLastCheckedAt).toHaveBeenCalledWith(1, 200);
     });
 });
