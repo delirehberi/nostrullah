@@ -1,5 +1,5 @@
 import { ScheduledEvent, ExecutionContext, MessageBatch, Queue } from '@cloudflare/workers-types';
-import { Env } from './types';
+import { Env, NostrAccount, PostFormat, ResourceContext } from './types';
 import { getAccounts } from './config';
 import { ContentGenerator } from './ai';
 import { NostrService } from './nostr';
@@ -8,6 +8,21 @@ import { generateValidatedPost } from './post-generation';
 import { ResourceService } from './resources';
 import { ContentSimilarityService } from './content-similarity';
 import { ControlProcessor } from './control';
+import { buildHashtagTags } from './hashtags';
+import { SchedulerService } from './scheduler';
+import { resolveMaxPostLength } from './post-length';
+import {
+    EngagementService,
+    TOP_POSTS_LIMIT,
+    TOP_POSTS_LOOKBACK_SECONDS,
+    TOP_POSTS_PLACEHOLDER,
+    adjustFormatWeights,
+} from './engagement';
+import {
+    POST_FORMAT_INSTRUCTIONS,
+    isFormatRotationEnabled,
+    selectPostFormat,
+} from './post-formats';
 
 const PROMPT_HISTORY_LIMIT = 20;
 const SIMILARITY_HISTORY_LIMIT = 30;
@@ -39,7 +54,10 @@ export async function runScheduled(
     // BUG-02: ResourceService holds a stateful XMLParser instance. Instantiate
     // it per-account inside processScheduledAccount so concurrent accounts cannot
     // corrupt each other's parsing state.
+    const engagementService = new EngagementService(storage);
+
     for (const account of accounts) {
+        ctx.waitUntil(refreshEngagement(engagementService, account));
         ctx.waitUntil(
             processScheduledAccount({
                 account,
@@ -55,19 +73,25 @@ export async function runScheduled(
 export default {
     async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext): Promise<void> {
         for (const message of batch.messages) {
-            const { account, content, targetRelays } = message.body;
+            const { account, content, targetRelays, sourceUrl, sourceTitle, format } = message.body;
             try {
                 const publishResult = await NostrService.publishEvent(
                     { ...account, relays: targetRelays },
-                    content
+                    content,
+                    { extraTags: buildHashtagTags(content) }
                 );
                 if (publishResult.published) {
                     console.log(
                         `Successfully published retried post for ${account.name || 'Unknown'}`
                     );
-                    const storage = new StorageService(env);
-                    await storage.updateLastRun(account.id);
-                    await storage.addPostToHistory(account.id, content, publishResult.eventId);
+                    await recordSuccessfulPost(
+                        new StorageService(env),
+                        account.id,
+                        content,
+                        publishResult.eventId,
+                        { context: '', sourceUrl, sourceTitle },
+                        format
+                    );
                     message.ack();
                 } else {
                     console.error(`Retry failed for ${account.name || 'Unknown'}`);
@@ -105,19 +129,27 @@ export default {
                 const history = await storage.getPostHistory(account.id, SIMILARITY_HISTORY_LIMIT);
                 const promptHistory = history.slice(0, PROMPT_HISTORY_LIMIT);
 
-                let context = '';
+                let resourceContext: ResourceContext = { context: '' };
                 if (account.data_resources && account.data_resources.length > 0) {
-                    context = await resourceService.fetchResources(account.data_resources);
+                    resourceContext = await resourceService.fetchResources(account.data_resources, {
+                        excludeUrls: await storage.getSharedUrls(account.id),
+                    });
                 }
+                const context = resourceContext.context;
+                const format = await choosePostFormat(storage, account, resourceContext);
+                const topPosts = await loadTopPosts(storage, account);
 
                 const generatedPost = await generateValidatedPost({
                     generator,
                     categories: account.categories,
                     previousPosts: promptHistory,
-                    similarityHistory: history,
+                    similarityHistory: [...history, ...topPosts],
                     context,
                     promptTemplate: account.prompt_template,
                     personality: account.personality,
+                    formatInstruction: format ? POST_FORMAT_INSTRUCTIONS[format] : undefined,
+                    maxLength: resolveMaxPostLength(account.max_post_length, env.MAX_POST_LENGTH),
+                    topPosts,
                     similarityChecker: similarityService,
                 });
                 const content = generatedPost.content;
@@ -129,6 +161,9 @@ export default {
                     categories: account.categories,
                     last_run: account.last_run_at,
                     context_used: !!context,
+                    source_url: resourceContext.sourceUrl,
+                    format: format || null,
+                    top_posts: topPosts,
                     account_details: {
                         prompt: account.prompt_template,
                         resources: account.data_resources,
@@ -166,13 +201,15 @@ async function processScheduledAccount(options: {
         const pubKey = NostrService.getPublicKeyFromPrivate(account.privateKey);
         const lastRun = account.last_run_at || 0;
 
-        if (!storage.shouldRun(lastRun, account.frequency)) {
+        const schedule = SchedulerService.fromAccount(account);
+        if (!storage.shouldRun(lastRun, schedule)) {
             const nextRunAt = new Date(
-                storage.getNextRunTimestamp(lastRun, account.frequency)
+                storage.getNextRunTimestamp(lastRun, schedule)
             ).toISOString();
             console.log(
                 `Skipping account ${pubKey.slice(0, 8)}... - not time yet ` +
-                    `(frequency=${account.frequency}, lastRun=${lastRun}, nextRunAt=${nextRunAt})`
+                    `(frequency=${account.frequency}, timezone=${account.timezone}, ` +
+                    `activeHours=${account.active_hours || 'all day'}, lastRun=${lastRun}, nextRunAt=${nextRunAt})`
             );
             return;
         }
@@ -187,20 +224,31 @@ async function processScheduledAccount(options: {
         const history = await storage.getPostHistory(account.id, SIMILARITY_HISTORY_LIMIT);
         const promptHistory = history.slice(0, PROMPT_HISTORY_LIMIT);
 
-        let context = '';
+        let resourceContext: ResourceContext = { context: '' };
         if (account.data_resources && account.data_resources.length > 0) {
             console.log(`Fetching resources for ${pubKey.slice(0, 8)}...`);
-            context = await resourceService.fetchResources(account.data_resources);
+            resourceContext = await resourceService.fetchResources(account.data_resources, {
+                excludeUrls: await storage.getSharedUrls(account.id),
+            });
+        }
+        const context = resourceContext.context;
+        const format = await choosePostFormat(storage, account, resourceContext);
+        const topPosts = await loadTopPosts(storage, account);
+        if (format) {
+            console.log(`Using post format ${format} for ${pubKey.slice(0, 8)}...`);
         }
 
         const generatedPost = await generateValidatedPost({
             generator,
             categories: account.categories,
             previousPosts: promptHistory,
-            similarityHistory: history,
+            similarityHistory: [...history, ...topPosts],
             context,
             promptTemplate: account.prompt_template,
             personality: account.personality,
+            formatInstruction: format ? POST_FORMAT_INSTRUCTIONS[format] : undefined,
+            maxLength: resolveMaxPostLength(account.max_post_length, env.MAX_POST_LENGTH),
+            topPosts,
             similarityChecker: similarityService,
         });
         const content = generatedPost.content;
@@ -230,20 +278,116 @@ async function processScheduledAccount(options: {
 
         const publishResult = await NostrService.publishEvent(
             { ...account, relays: targetRelays },
-            content
+            content,
+            { extraTags: buildHashtagTags(content) }
         );
 
         if (publishResult.published) {
             console.log(`Successfully published for ${pubKey.slice(0, 8)}...`);
-            await storage.updateLastRun(account.id);
-            await storage.addPostToHistory(account.id, content, publishResult.eventId);
+            await recordSuccessfulPost(
+                storage,
+                account.id,
+                content,
+                publishResult.eventId,
+                resourceContext,
+                format
+            );
         } else {
             console.error(`Failed to publish for ${pubKey.slice(0, 8)}... Enqueuing for retry.`);
             if (env.FAILED_POSTS) {
-                await env.FAILED_POSTS.send({ account, content, targetRelays });
+                await env.FAILED_POSTS.send({
+                    account,
+                    content,
+                    targetRelays,
+                    sourceUrl: resourceContext.sourceUrl,
+                    sourceTitle: resourceContext.sourceTitle,
+                    format,
+                });
             }
         }
     } catch (error) {
         console.error('Error processing account:', error);
+    }
+}
+
+/**
+ * Best-performing recent posts for the prompt: used for accounts without a custom
+ * prompt template, or whose template contains `$$TOP_POSTS$$`.
+ */
+async function loadTopPosts(storage: StorageService, account: NostrAccount): Promise<string[]> {
+    if (
+        !account.id ||
+        (account.prompt_template && !account.prompt_template.includes(TOP_POSTS_PLACEHOLDER))
+    ) {
+        return [];
+    }
+
+    return storage.getTopPosts(
+        account.id,
+        Math.floor(Date.now() / 1000) - TOP_POSTS_LOOKBACK_SECONDS,
+        TOP_POSTS_LIMIT
+    );
+}
+
+async function refreshEngagement(
+    engagementService: EngagementService,
+    account: NostrAccount
+): Promise<void> {
+    try {
+        await engagementService.refreshAccount(account);
+    } catch (error) {
+        console.error(`Failed to collect engagement for account ${account.id}:`, error);
+    }
+}
+
+/**
+ * Picks this post's format, or undefined when rotation does not apply to the account
+ * (custom prompt template without `$$FORMAT$$`, or rotation switched off).
+ */
+async function choosePostFormat(
+    storage: StorageService,
+    account: NostrAccount,
+    resourceContext: ResourceContext
+): Promise<PostFormat | undefined> {
+    if (!account.id || !isFormatRotationEnabled(account.prompt_template)) {
+        return undefined;
+    }
+
+    // Accounts on the default weights get them adjusted by measured engagement.
+    const weights =
+        account.post_formats ??
+        adjustFormatWeights(
+            await storage.getFormatPerformance(
+                account.id,
+                Math.floor(Date.now() / 1000) - TOP_POSTS_LOOKBACK_SECONDS
+            )
+        );
+
+    return selectPostFormat(weights, {
+        hasLinkContext: Boolean(resourceContext.sourceUrl),
+        lastFormat: await storage.getLastPostFormat(account.id),
+    });
+}
+
+/**
+ * Persists the outcome of a successful publish: run timestamp, post history and,
+ * when the post was built from a resource item, that item as shared.
+ */
+async function recordSuccessfulPost(
+    storage: StorageService,
+    accountId: number,
+    content: string,
+    eventId: string,
+    resourceContext: ResourceContext,
+    format?: PostFormat
+): Promise<void> {
+    await storage.updateLastRun(accountId);
+    await storage.addPostToHistory(accountId, content, eventId, format);
+    if (resourceContext.sourceUrl) {
+        await storage.recordSharedItem(
+            accountId,
+            resourceContext.sourceUrl,
+            resourceContext.sourceTitle
+        );
     }
 }

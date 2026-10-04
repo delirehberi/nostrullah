@@ -39,31 +39,29 @@ describe('generateValidatedPost', () => {
             '',
             undefined,
             undefined,
-            expect.stringContaining('https://bad.example/test')
+            expect.objectContaining({
+                additionalGuidance: expect.stringContaining('https://bad.example/test'),
+            })
         );
     });
 
-    it('falls back to the best attempt instead of throwing when all retries are exhausted', async () => {
+    it('throws instead of publishing when every attempt has invalid URLs', async () => {
         const generator = {
             generatePost: vi.fn().mockResolvedValue('https://bad.example/again'),
         };
 
-        // BUG-01: Previously this test asserted .rejects.toThrow which meant the post was
-        // silently dropped. After the fix, exhaustion returns the best available attempt
-        // with a warning rather than throwing.
-        const result = await generateValidatedPost({
-            generator,
-            categories: ['technology'],
-            maxAttempts: 2,
-            validateUrls: vi.fn().mockResolvedValue({
-                valid: false,
-                invalidUrls: ['https://bad.example/again'],
-            }),
-        });
-
-        expect(result.attempts).toHaveLength(2);
-        // Best attempt is the last one (all have invalid URLs, so fallback to last).
-        expect(result.content).toBe('https://bad.example/again');
+        await expect(
+            generateValidatedPost({
+                generator,
+                categories: ['technology'],
+                maxAttempts: 2,
+                validateUrls: vi.fn().mockResolvedValue({
+                    valid: false,
+                    invalidUrls: ['https://bad.example/again'],
+                }),
+            })
+        ).rejects.toThrow('skipping publish');
+        expect(generator.generatePost).toHaveBeenCalledTimes(2);
     });
 
     it('retries when the generated content is too similar to post history', async () => {
@@ -119,7 +117,11 @@ describe('generateValidatedPost', () => {
             '',
             undefined,
             undefined,
-            expect.stringContaining('Same market update and takeaway as a recent post.')
+            expect.objectContaining({
+                additionalGuidance: expect.stringContaining(
+                    'Same market update and takeaway as a recent post.'
+                ),
+            })
         );
         expect(similarityChecker.checkSimilarity).toHaveBeenNthCalledWith(
             1,
@@ -216,6 +218,76 @@ describe('generateValidatedPost — exhaustion fallback (BUG-01)', () => {
         expect(result.content).toBe('Third attempt, no links, slightly similar');
         expect(result.attempts).toHaveLength(3);
     });
+
+    it('never publishes a leaked draft, even when every attempt leaked', async () => {
+        const generator = { generatePost: vi.fn().mockResolvedValue('leaked prompt text') };
+
+        await expect(
+            generateValidatedPost({
+                generator,
+                categories: ['technology'],
+                maxAttempts: 3,
+                validateUrls: vi.fn().mockResolvedValue({ valid: true, invalidUrls: [] }),
+                checkPromptLeakage: () => ({ isLeaked: true, reason: 'echoed template' }),
+            })
+        ).rejects.toThrow('skipping publish');
+    });
+
+    it('does not publish when attempts are only leaked or have invalid URLs', async () => {
+        const generator = {
+            generatePost: vi
+                .fn()
+                .mockResolvedValueOnce('leaked draft')
+                .mockResolvedValueOnce('draft with https://bad.example/x')
+                .mockResolvedValueOnce('leaked draft with https://bad.example/y'),
+        };
+        const validateUrls = vi
+            .fn()
+            .mockResolvedValueOnce({ valid: true, invalidUrls: [] })
+            .mockResolvedValueOnce({ valid: false, invalidUrls: ['https://bad.example/x'] })
+            .mockResolvedValueOnce({ valid: false, invalidUrls: ['https://bad.example/y'] });
+
+        await expect(
+            generateValidatedPost({
+                generator,
+                categories: ['technology'],
+                maxAttempts: 3,
+                validateUrls,
+                checkPromptLeakage: (content: string) => ({
+                    isLeaked: content.startsWith('leaked'),
+                    reason: 'echoed template',
+                }),
+            })
+        ).rejects.toThrow('skipping publish');
+    });
+
+    it('publishes the least similar draft when attempts are rejected only for similarity', async () => {
+        const generator = {
+            generatePost: vi
+                .fn()
+                .mockResolvedValueOnce('draft A')
+                .mockResolvedValueOnce('draft B')
+                .mockResolvedValueOnce('draft C'),
+        };
+        const scores: Record<string, number> = { 'draft A': 0.9, 'draft B': 0.6, 'draft C': 0.8 };
+        const similarityChecker = {
+            checkSimilarity: vi.fn(async (content: string) => ({
+                isTooSimilar: true,
+                match: { previousPost: 'old', reason: 'similar', score: scores[content] },
+            })),
+        };
+
+        const result = await generateValidatedPost({
+            generator,
+            categories: ['technology'],
+            maxAttempts: 3,
+            validateUrls: vi.fn().mockResolvedValue({ valid: true, invalidUrls: [] }),
+            similarityChecker,
+            checkPromptLeakage: () => ({ isLeaked: false }),
+        });
+
+        expect(result.content).toBe('draft B');
+    });
 });
 
 describe('detectPromptLeakage & generateValidatedPost prompt protection', () => {
@@ -259,9 +331,11 @@ describe('detectPromptLeakage & generateValidatedPost prompt protection', () => 
             '',
             samplePromptTemplate,
             undefined,
-            expect.stringContaining(
-                'CRITICAL: Your previous draft repeated or leaked the prompt template'
-            )
+            expect.objectContaining({
+                additionalGuidance: expect.stringContaining(
+                    'CRITICAL: Your previous draft repeated or leaked the prompt template'
+                ),
+            })
         );
     });
 

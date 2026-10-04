@@ -2,6 +2,9 @@ import { Ai } from '@cloudflare/workers-types';
 import { DEFAULT_AI_MODEL, Env, Personality } from './types';
 import { withRetry } from './utils';
 import { personalityTemplates } from '../prompts';
+import { FORMAT_PLACEHOLDER } from './post-formats';
+import { MAX_LENGTH_PLACEHOLDER, resolveMaxPostLength } from './post-length';
+import { TOP_POSTS_PLACEHOLDER, formatTopPostsForPrompt } from './engagement';
 
 export function extractOutputText(response: any): string {
     let text: string;
@@ -40,6 +43,17 @@ export function extractOutputText(response: any): string {
     return text;
 }
 
+export interface GeneratePostOptions {
+    /** Retry guidance from previously rejected drafts. */
+    additionalGuidance?: string;
+    /** Post format instruction (see `src/post-formats.ts`). */
+    formatInstruction?: string;
+    /** Character limit (links excluded); defaults to MAX_POST_LENGTH or 500. */
+    maxLength?: number;
+    /** Best-performing recent posts, shown as examples of what resonated. */
+    topPosts?: string[];
+}
+
 export class ContentGenerator {
     private ai: Ai;
     private model: string;
@@ -48,7 +62,7 @@ export class ContentGenerator {
     constructor(env: Env) {
         this.ai = env.AI;
         this.model = env.AI_MODEL || DEFAULT_AI_MODEL;
-        this.maxLength = parseInt(env.MAX_POST_LENGTH || '280');
+        this.maxLength = resolveMaxPostLength(undefined, env.MAX_POST_LENGTH);
     }
 
     async generatePost(
@@ -57,14 +71,19 @@ export class ContentGenerator {
         context: string = '',
         promptTemplate?: string,
         personality?: Personality,
-        additionalGuidance?: string
+        options: GeneratePostOptions = {}
     ): Promise<any> {
+        const { additionalGuidance, formatInstruction } = options;
+        const maxLength = String(options.maxLength ?? this.maxLength);
         // Fall back cleanly if the DB contains an unknown personality value.
         const normalizedPersonality: Personality =
             personality && Object.prototype.hasOwnProperty.call(personalityTemplates, personality)
                 ? personality
                 : 'informative';
-        const instructions = personalityTemplates[normalizedPersonality];
+        const instructions = personalityTemplates[normalizedPersonality].replaceAll(
+            MAX_LENGTH_PLACEHOLDER,
+            maxLength
+        );
 
         // 2. Construct the user/input prompt
         let inputPrompt = '';
@@ -80,6 +99,24 @@ export class ContentGenerator {
             inputPrompt = inputPrompt.replace('$$RESOURCES$$', context);
         } else if (context) {
             inputPrompt += `\n\nContext/News:\n${context}`;
+        }
+
+        // The placeholder is always removed; the instruction goes there when present,
+        // otherwise it is appended.
+        if (inputPrompt.includes(FORMAT_PLACEHOLDER)) {
+            inputPrompt = inputPrompt.replace(
+                FORMAT_PLACEHOLDER,
+                formatInstruction ? `Post format: ${formatInstruction}` : ''
+            );
+        } else if (formatInstruction) {
+            inputPrompt += `\n\nPost format for this post: ${formatInstruction}`;
+        }
+
+        const topPostsBlock = formatTopPostsForPrompt(options.topPosts || []);
+        if (inputPrompt.includes(TOP_POSTS_PLACEHOLDER)) {
+            inputPrompt = inputPrompt.replace(TOP_POSTS_PLACEHOLDER, topPostsBlock);
+        } else if (topPostsBlock) {
+            inputPrompt += `\n\n${topPostsBlock}`;
         }
 
         if (inputPrompt.includes('$$CATEGORIES$$')) {
@@ -100,6 +137,8 @@ export class ContentGenerator {
         if (additionalGuidance) {
             inputPrompt += `\n\nAdditional requirements:\n${additionalGuidance}`;
         }
+
+        inputPrompt = inputPrompt.replaceAll(MAX_LENGTH_PLACEHOLDER, maxLength);
 
         const systemPrompt = [
             instructions,

@@ -17,7 +17,7 @@ This process ensures that your work aligns with the user's expectations.
 This project is a headless Nostr bot running on Cloudflare Workers.
 
 - The worker entrypoint is `src/index.ts`.
-- Scheduled execution is driven by a Cloudflare cron trigger.
+- Scheduled execution is driven by a Cloudflare cron trigger that runs hourly (`7 * * * *` in `wrangler.toml`; see `wrangler.toml.dist`).
 - Account configuration is loaded from a D1 database, not from in-code arrays.
 - Content is generated with Cloudflare AI in `src/ai.ts`.
 - Posts are signed and published to Nostr relays in `src/nostr.ts`.
@@ -28,13 +28,13 @@ This project is a headless Nostr bot running on Cloudflare Workers.
 
 1. The cron trigger invokes `scheduled()` in `src/index.ts`.
 2. `getAccounts()` in `src/config.ts` loads all active accounts from the `accounts` table.
-3. Each account is processed in `ctx.waitUntil(...)`.
-4. The worker checks whether the account should run now using `StorageService.shouldRun()`.
+3. Each account is processed in `ctx.waitUntil(...)`. In a separate `waitUntil`, `EngagementService` (`src/engagement.ts`) collects reactions, reposts, replies and zaps for the account's posts of the last 7 days, at most every 6 hours (one relay query per account), and stores per-post counts and scores. A failed collection is retried on the next hourly run.
+4. The worker checks whether the account should run now using `StorageService.shouldRun()` (`src/scheduler.ts`): the frequency is evaluated in the account's `timezone`, nothing is posted outside `active_hours` (slots missed overnight produce one post when the window opens), and each slot is delayed by a stable random 0..`jitter_hours` whole-hour offset. Due-ness is based on the first slot after `last_run_at`, so later slots' delays never postpone a pending post.
 5. The worker loads recent post history from `post_history`.
-6. The worker optionally fetches one weighted external resource.
-7. `ContentGenerator` builds the prompt and calls Cloudflare AI.
-8. `NostrService` signs and publishes the generated post to all configured relays.
-9. On success, `last_run_at` and `post_history` are updated in D1.
+6. The worker optionally fetches external resource context. Resources are tried in weighted-random order (up to 3) until one returns usable content; RSS items already listed in `shared_items` are skipped. If none succeed, the post is generated without resource context.
+7. A post format is picked by weight (`src/post-formats.ts`), avoiding the previous post's format, for accounts without a custom `prompt_template` or whose template contains `$$FORMAT$$`; accounts on the default weights get them scaled (0.5-2x) by each format's measured engagement. The 3 best-scoring posts of the last 30 days are added to the prompt (same template rule, via `$$TOP_POSTS$$`). `ContentGenerator` builds the prompt and calls Cloudflare AI.
+8. `NostrService` signs and publishes the generated post to all configured relays. Hashtags in the post (max 5) are added as NIP-12 `t` tags via `src/hashtags.ts`.
+9. On success, `last_run_at`, `post_history` and (for RSS-based posts) `shared_items` are updated in D1.
 
 ## Repository Map
 
@@ -56,12 +56,21 @@ This project is a headless Nostr bot running on Cloudflare Workers.
     - Supports both `nsec` and hex private keys.
 
 - `src/storage.ts`
-    - Handles D1 reads/writes for `last_run_at` and `post_history`.
+    - Handles D1 reads/writes for `last_run_at`, `post_history` and `shared_items`.
     - Contains posting-frequency logic.
 
 - `src/resources.ts`
-    - Performs weighted resource selection.
+    - Performs weighted resource selection with fallback to the next resource on failure or no new content.
     - Supports `rss`, `scraping`, and `quote` resources.
+
+- `src/post-formats.ts`
+    - Post format definitions (`news_commentary`, `question`, `tip`, `hot_take`, `short_list`), default weights and weighted selection.
+
+- `src/engagement.ts`
+    - Collects and scores engagement (reactions, reposts, replies, zaps), adjusts format weights and formats top posts / stats.
+
+- `src/hashtags.ts`
+    - Extracts hashtags from generated posts and builds `t` tags for publishing.
 
 - `src/types.ts`
     - Shared TypeScript types, including `Env`, `NostrAccount`, and `Resource`.
@@ -131,6 +140,14 @@ The worker currently depends on these D1 tables:
 - `is_active`
 - `created_at`
 - `personality`
+- `timezone` (IANA name, default `Europe/Istanbul`)
+- `active_hours` (`HH:MM-HH:MM` in `timezone`, default `07:00-23:00`; `NULL` = all day)
+- `jitter_hours` (0-6 whole hours of random delay, default `1`)
+- `post_formats` as JSON text (format → weight; `NULL` = defaults, `{}` = rotation off)
+- `max_post_length` (100-2000 characters, links not counted; `NULL` = `MAX_POST_LENGTH` env var or 500)
+- `engagement_checked_at` (unix seconds of the last engagement collection)
+
+Frequency presets (in the account's timezone): `hourly`, `every_2_hours`, `twice_a_day` (09:00 and 18:00), `daily` (09:00); any 5-field cron expression is also accepted.
 
 ### `post_history`
 
@@ -138,6 +155,17 @@ The worker currently depends on these D1 tables:
 - `account_id`
 - `content`
 - `created_at`
+- `event_id`
+- `format` (post format used, if any)
+- `reactions`, `reposts`, `replies`, `zaps`, `zap_sats`, `engagement_score` (reactions + 2×reposts + 3×replies + 3×zaps), `engagement_updated_at`
+
+### `shared_items`
+
+- `id`
+- `account_id`
+- `url` (normalized item link, unique per account)
+- `title`
+- `created_at` (unix seconds; rows older than 90 days are pruned)
 
 If a change affects account shape or persistence, review:
 
@@ -209,6 +237,11 @@ Prompt templates may contain these placeholders:
 - `$$RESOURCES$$`
 - `$$CATEGORIES$$`
 - `$$POST_HISTORY$$`
+- `$$FORMAT$$` (post format instruction; also opts a custom template into format rotation)
+- `$$MAX_LENGTH$$` (the account's character limit; also used by the personality templates)
+- `$$TOP_POSTS$$` (best-performing recent posts; also opts a custom template into this feedback)
+
+Drafts longer than the limit (links not counted, see `src/post-length.ts`) are retried with shortening guidance; if every attempt is too long, the shortest safe draft is published.
 
 Current prompt templates are designed to generate Turkish posts and should stay aligned with the product intent unless the user asks otherwise.
 

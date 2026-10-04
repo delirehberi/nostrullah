@@ -33,6 +33,24 @@ function createDbMock(firstResult?: any) {
 }
 
 describe('StorageService control-plane helpers', () => {
+    it('serializes schedule settings and clears active hours with NULL', async () => {
+        const { db, statements } = createDbMock();
+        const storage = new StorageService({ DB: db } as any);
+
+        await storage.updateAccountConfiguration(7, {
+            timezone: 'Europe/Berlin',
+            active_hours: null,
+            jitter_hours: 0,
+            max_post_length: null,
+        });
+
+        expect(statements[0].sql).toContain('timezone = ?');
+        expect(statements[0].sql).toContain('active_hours = ?');
+        expect(statements[0].sql).toContain('jitter_hours = ?');
+        expect(statements[0].sql).toContain('max_post_length = ?');
+        expect(statements[0].values).toEqual(['Europe/Berlin', null, 0, null, 7]);
+    });
+
     it('serializes account config updates into D1 columns', async () => {
         const { db, statements } = createDbMock();
         const storage = new StorageService({ DB: db } as any);
@@ -71,10 +89,10 @@ describe('StorageService control-plane helpers', () => {
         const { db, statements } = createDbMock();
         const storage = new StorageService({ DB: db } as any);
 
-        await storage.addPostToHistory(3, 'hello nostr', 'event-123');
+        await storage.addPostToHistory(3, 'hello nostr', 'event-123', 'question');
 
         expect(statements[0].sql).toContain('INSERT INTO post_history');
-        expect(statements[0].values).toEqual([3, 'hello nostr', 'event-123']);
+        expect(statements[0].values).toEqual([3, 'hello nostr', 'event-123', 'question']);
     });
 
     it('records processed control events with audit metadata', async () => {

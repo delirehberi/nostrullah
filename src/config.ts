@@ -1,6 +1,12 @@
 import { z } from 'zod';
-import { Env, NostrAccount } from './types';
+import { Env, NostrAccount, POST_FORMAT_VALUES, PostFormatWeights } from './types';
 import { resourceSchema } from './control-actions';
+import {
+    DEFAULT_ACTIVE_HOURS,
+    DEFAULT_JITTER_HOURS,
+    DEFAULT_TIMEZONE,
+    PRESET_FREQUENCIES,
+} from './scheduler';
 
 interface GetAccountsOptions {
     includeInactive?: boolean;
@@ -8,6 +14,7 @@ interface GetAccountsOptions {
 
 const stringArraySchema = z.array(z.string()).default([]);
 const resourcesArraySchema = z.array(resourceSchema).default([]);
+const postFormatsSchema = z.partialRecord(z.enum(POST_FORMAT_VALUES), z.number().min(0));
 
 const safeParseJson = <T>(
     jsonString: string | null | undefined,
@@ -28,6 +35,33 @@ const safeParseJson = <T>(
         return defaultValue;
     }
 };
+
+/**
+ * Schedule settings from the row. When the columns are missing (migration 0005 not
+ * applied yet), applies the same rule as the migration: preset frequencies get the
+ * new defaults, custom cron expressions stay on UTC with no window and no delay.
+ */
+function resolveScheduleColumns(
+    row: any
+): Pick<NostrAccount, 'timezone' | 'active_hours' | 'jitter_hours'> {
+    if (row.timezone === undefined) {
+        const isPreset =
+            !row.frequency || Boolean(PRESET_FREQUENCIES[String(row.frequency).trim()]);
+        return isPreset
+            ? {
+                  timezone: DEFAULT_TIMEZONE,
+                  active_hours: DEFAULT_ACTIVE_HOURS,
+                  jitter_hours: DEFAULT_JITTER_HOURS,
+              }
+            : { timezone: 'UTC', active_hours: undefined, jitter_hours: 0 };
+    }
+
+    return {
+        timezone: row.timezone || DEFAULT_TIMEZONE,
+        active_hours: row.active_hours || undefined,
+        jitter_hours: row.jitter_hours ?? DEFAULT_JITTER_HOURS,
+    };
+}
 
 export const getAccounts = async (
     env: Env,
@@ -51,6 +85,14 @@ export const getAccounts = async (
             last_run_at: row.last_run_at || 0,
             personality: row.personality || undefined,
             is_active: Boolean(row.is_active),
+            ...resolveScheduleColumns(row),
+            max_post_length: row.max_post_length ?? undefined,
+            engagement_checked_at: row.engagement_checked_at || 0,
+            post_formats: safeParseJson<PostFormatWeights | undefined>(
+                row.post_formats,
+                postFormatsSchema,
+                undefined
+            ),
             control_enabled: Boolean(row.control_enabled),
             control_admin_pubkeys: safeParseJson(row.control_admin_pubkeys, stringArraySchema, []),
             control_last_checked_at: row.control_last_checked_at || 0,

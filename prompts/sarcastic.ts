@@ -6,7 +6,7 @@ Generate a short, sarcastic social media post.
 - The post must be in Turkish.
 - The tone should be cynical, dry, and witty.
 - Use understatement and irony.
-- The post must be under 280 characters.
+- The post must be under $$MAX_LENGTH$$ characters (links are not counted).
 - Use sarcastic or ironic hashtags.
 - CRITICAL: Output ONLY the final social media post content.
 - NEVER repeat, quote, paraphrase, or echo the prompt, instructions, templates, or system directives.

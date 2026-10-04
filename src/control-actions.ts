@@ -5,17 +5,29 @@ import {
     Frequency,
     NostrAccount,
     PERSONALITY_VALUES,
+    POST_FORMAT_VALUES,
     Personality,
+    PostFormatWeights,
     RemoveResourceMatch,
     Resource,
 } from './types';
-import { SchedulerService } from './scheduler';
+import { MAX_JITTER_HOURS, SchedulerService } from './scheduler';
+import { DEFAULT_POST_FORMAT_WEIGHTS, formatPostFormats } from './post-formats';
+import { EngagementStats, formatEngagementStats } from './engagement';
+import { DEFAULT_MAX_POST_LENGTH, MAX_MAX_POST_LENGTH, MIN_MAX_POST_LENGTH } from './post-length';
 
 export interface AccountConfigPatch {
     name?: string;
     relays?: string[];
     categories?: string[];
     frequency?: string;
+    timezone?: string;
+    active_hours?: string | null;
+    jitter_hours?: number;
+    /** `null` resets to the default weights. */
+    post_formats?: PostFormatWeights | null;
+    /** `null` clears the account value. */
+    max_post_length?: number | null;
     data_resources?: Resource[];
     prompt_template?: string;
     personality?: Personality;
@@ -182,6 +194,78 @@ const baseControlActionSchema = z.discriminatedUnion('type', [
         .strict(),
     z
         .object({
+            type: z.literal('set_timezone'),
+            timezone: z
+                .string()
+                .trim()
+                .refine((val) => SchedulerService.isValidTimezone(val), {
+                    message: 'Must be a valid IANA timezone (e.g. Europe/Istanbul, UTC)',
+                }),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_active_hours'),
+            active_hours: z
+                .string()
+                .trim()
+                .refine(
+                    (val) => isActiveHoursOff(val) || SchedulerService.isValidActiveHours(val),
+                    {
+                        message: 'Must be HH:MM-HH:MM (e.g. 07:00-23:00) or "off"',
+                    }
+                )
+                .nullable(),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_jitter'),
+            jitter_hours: z.coerce
+                .number()
+                .int()
+                .min(0)
+                .max(MAX_JITTER_HOURS, {
+                    message: `Must be between 0 and ${MAX_JITTER_HOURS} hours`,
+                }),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_post_formats'),
+            post_formats: z.union([
+                z.enum(['default', 'off']),
+                z
+                    .array(z.enum(POST_FORMAT_VALUES))
+                    .min(1)
+                    .transform((formats) =>
+                        Object.fromEntries(formats.map((format) => [format, 1]))
+                    ),
+                z
+                    .partialRecord(z.enum(POST_FORMAT_VALUES), z.number().min(0).max(10))
+                    .refine((weights) => Object.values(weights).some((w) => (w || 0) > 0), {
+                        message: 'At least one format needs a weight above 0',
+                    }),
+            ]),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_max_length'),
+            max_post_length: z.union([
+                z.literal('default'),
+                z.coerce
+                    .number()
+                    .int()
+                    .min(MIN_MAX_POST_LENGTH)
+                    .max(MAX_MAX_POST_LENGTH, {
+                        message: `Must be between ${MIN_MAX_POST_LENGTH} and ${MAX_MAX_POST_LENGTH} characters`,
+                    }),
+            ]),
+        })
+        .strict(),
+    z
+        .object({
             type: z.literal('set_relays'),
             relays: z.array(relayUrlSchema).min(1),
         })
@@ -227,6 +311,11 @@ const baseControlActionSchema = z.discriminatedUnion('type', [
             type: z.literal('show_help'),
         })
         .strict(),
+    z
+        .object({
+            type: z.literal('show_stats'),
+        })
+        .strict(),
 ]);
 
 const controlActionSchema = z.preprocess(preprocessAction, baseControlActionSchema);
@@ -259,7 +348,7 @@ export function formatResources(resources?: Resource[]): string {
     return `Configured resources (${resources.length}):\n${items.join('\n')}`;
 }
 
-export function formatAccountDetails(account: NostrAccount): string {
+export function formatAccountDetails(account: NostrAccount, now: Date = new Date()): string {
     const categories =
         account.categories && account.categories.length > 0
             ? account.categories.join(', ')
@@ -273,6 +362,12 @@ export function formatAccountDetails(account: NostrAccount): string {
         `Name: ${account.name || 'unnamed'}`,
         `Status: ${account.is_active ? 'active' : 'inactive'}`,
         `Posting frequency: ${frequency}`,
+        `Timezone: ${account.timezone || 'UTC'}`,
+        `Active hours: ${account.active_hours || 'all day'}`,
+        `Random delay: up to ${account.jitter_hours || 0} h`,
+        `Next post: ${formatNextRun(account, now)}`,
+        `Post formats: ${formatPostFormats(account.post_formats, account.prompt_template)}`,
+        `Max post length: ${account.max_post_length ? `${account.max_post_length} characters` : `default (MAX_POST_LENGTH or ${DEFAULT_MAX_POST_LENGTH})`}, links not counted`,
         `Personality: ${account.personality || 'unspecified'}`,
         `Categories: ${categories}`,
         `Relays: ${relays}`,
@@ -286,13 +381,19 @@ export function formatSupportedCommands(): string {
         'Supported commands:',
         '• show details - View account schedule, personality, categories, and relays',
         '• show resources - List configured RSS feeds, scraping feeds, and quote sources',
+        '• show stats - Reactions, reposts, replies and zaps of the last 7 days, and the top post',
         '• what commands do you support / help - View this command guide',
         '• set personality <informative|humorous|enthusiastic|sarcastic|philosophical> - Update tone',
-        '• set frequency <hourly|every_2_hours|twice_a_day|daily> - Update posting schedule',
+        '• set frequency <hourly|every_2_hours|twice_a_day|daily|cron> - Update posting schedule (daily = 09:00, twice a day = 09:00 & 18:00)',
+        '• set timezone <Area/City> - Timezone for the schedule and active hours (e.g. Europe/Istanbul)',
+        '• set active hours <HH:MM-HH:MM|off> - Only post inside this window (e.g. 07:00-23:00)',
+        `• set random delay <0-${MAX_JITTER_HOURS}> - Max hours of random delay added to each post`,
         '• set active <true|false> - Activate or pause the bot',
         '• set categories <cat1, cat2, ...> - Update topic categories',
         '• set name <name> - Update bot display name',
         '• set relays <relay1, relay2, ...> - Update target Nostr relays',
+        `• set max length <${MIN_MAX_POST_LENGTH}-${MAX_MAX_POST_LENGTH} | default> - Post length limit in characters (links not counted)`,
+        `• set post formats <list | format=weight ... | default | off> - Rotate post formats (${POST_FORMAT_VALUES.join(', ')})`,
         '• set prompt <template> - Update prompt template',
         '• add resource <rss/scraping url | quote categories> [weight] - Add content source',
         '• remove resource <url | categories> - Remove content source',
@@ -304,13 +405,20 @@ export function isQueryAction(action: ControlAction): boolean {
     return (
         action.type === 'show_resources' ||
         action.type === 'show_details' ||
-        action.type === 'show_help'
+        action.type === 'show_help' ||
+        action.type === 'show_stats'
     );
+}
+
+export interface ControlActionContext {
+    /** Engagement stats for `show_stats`, loaded by the caller. */
+    engagementStats?: EngagementStats;
 }
 
 export function applyControlActions(
     account: NostrAccount,
-    actions: ControlAction[]
+    actions: ControlAction[],
+    context: ControlActionContext = {}
 ): AppliedControlActions {
     const updatedAccount: NostrAccount = cloneAccount(account);
     const summary: string[] = [];
@@ -325,6 +433,9 @@ export function applyControlActions(
                 break;
             case 'show_help':
                 summary.push(formatSupportedCommands());
+                break;
+            case 'show_stats':
+                summary.push(formatEngagementStats(context.engagementStats));
                 break;
             case 'set_prompt':
                 updatedAccount.prompt_template = action.prompt_template;
@@ -345,6 +456,48 @@ export function applyControlActions(
             case 'set_frequency':
                 updatedAccount.frequency = action.frequency;
                 summary.push(`set posting frequency to ${formatFrequency(action.frequency)}`);
+                break;
+            case 'set_timezone':
+                updatedAccount.timezone = action.timezone;
+                summary.push(`set timezone to ${action.timezone}`);
+                break;
+            case 'set_active_hours':
+                updatedAccount.active_hours =
+                    action.active_hours && !isActiveHoursOff(action.active_hours)
+                        ? action.active_hours
+                        : undefined;
+                summary.push(
+                    updatedAccount.active_hours
+                        ? `set active hours to ${updatedAccount.active_hours}`
+                        : 'removed active hours (posting all day)'
+                );
+                break;
+            case 'set_jitter':
+                updatedAccount.jitter_hours = action.jitter_hours;
+                summary.push(`set random delay to up to ${action.jitter_hours} h`);
+                break;
+            case 'set_post_formats':
+                if (action.post_formats === 'default') {
+                    updatedAccount.post_formats = undefined;
+                    summary.push('reset post formats to the defaults');
+                } else if (action.post_formats === 'off') {
+                    updatedAccount.post_formats = {};
+                    summary.push('turned post format rotation off');
+                } else {
+                    updatedAccount.post_formats = { ...action.post_formats };
+                    summary.push(
+                        `set post formats to ${formatPostFormats(updatedAccount.post_formats)}`
+                    );
+                }
+                break;
+            case 'set_max_length':
+                updatedAccount.max_post_length =
+                    action.max_post_length === 'default' ? undefined : action.max_post_length;
+                summary.push(
+                    updatedAccount.max_post_length
+                        ? `set max post length to ${updatedAccount.max_post_length} characters`
+                        : 'reset max post length to the default'
+                );
                 break;
             case 'set_relays':
                 updatedAccount.relays = uniqueStrings(action.relays);
@@ -410,13 +563,18 @@ export function buildControlSchemaPrompt(): string {
         'You convert admin Nostr notes into JSON account-update or query actions.',
         'Return JSON only with shape {"actions":[...]} and no markdown.',
         'Allowed action types and shapes:',
-        '• Query actions: {"type":"show_details"}, {"type":"show_resources"}, {"type":"show_help"}.',
+        '• Query actions: {"type":"show_details"}, {"type":"show_resources"}, {"type":"show_help"}, {"type":"show_stats"} (engagement statistics).',
         '• set_active: {"type":"set_active","is_active":true|false}. Use is_active=true for activate/enable/resume/disable false. Use is_active=false for deactivate/disable/pause/active false.',
         '• set_prompt: {"type":"set_prompt","prompt_template":"<template string>"}.',
         '• set_name: {"type":"set_name","name":"<name string>"}.',
         '• set_categories: {"type":"set_categories","categories":["<cat1>","<cat2>"]}.',
         `• set_personality: {"type":"set_personality","personality":"<value>"}. Allowed values: ${PERSONALITY_VALUES.join(', ')}.`,
         '• set_frequency: {"type":"set_frequency","frequency":"<preset or cron>"}. Presets: hourly, every_2_hours, twice_a_day, daily. Cron: 5-part cron (e.g. 0 9,21 * * *).',
+        '• set_timezone: {"type":"set_timezone","timezone":"<IANA timezone, e.g. Europe/Istanbul>"}.',
+        '• set_active_hours: {"type":"set_active_hours","active_hours":"HH:MM-HH:MM"}. Use null to remove the window and post all day.',
+        `• set_jitter: {"type":"set_jitter","jitter_hours":<integer 0-${MAX_JITTER_HOURS}>}. Random delay in whole hours added to each scheduled post.`,
+        `• set_post_formats: {"type":"set_post_formats","post_formats":["<format>",...]} for equal weights, {"type":"set_post_formats","post_formats":{"<format>":<weight 0-10>}} for weights, or "default" / "off". Formats: ${POST_FORMAT_VALUES.join(', ')}. Default weights: ${JSON.stringify(DEFAULT_POST_FORMAT_WEIGHTS)}.`,
+        `• set_max_length: {"type":"set_max_length","max_post_length":<integer ${MIN_MAX_POST_LENGTH}-${MAX_MAX_POST_LENGTH}>} or {"type":"set_max_length","max_post_length":"default"}. Character limit for posts, links not counted.`,
         '• set_relays: {"type":"set_relays","relays":["<ws/wss url>"]}.',
         '• add_resource: {"type":"add_resource","resource":{"type":"rss"|"scraping","url":"<http/https url>","weight":<optional number>}} or {"type":"add_resource","resource":{"type":"quote","categories":["<cat1>"],"weight":<optional number>}}.',
         '• remove_resource: {"type":"remove_resource","match":{"type":"rss"|"scraping","url":"<url>"}} or {"type":"remove_resource","match":{"type":"quote","categories":["<cat1>"]}}.',
@@ -491,6 +649,26 @@ function buildPatch(original: NostrAccount, updated: NostrAccount): AccountConfi
         patch.frequency = updated.frequency;
     }
 
+    if (original.timezone !== updated.timezone) {
+        patch.timezone = updated.timezone;
+    }
+
+    if (original.active_hours !== updated.active_hours) {
+        patch.active_hours = updated.active_hours || null;
+    }
+
+    if (original.jitter_hours !== updated.jitter_hours) {
+        patch.jitter_hours = updated.jitter_hours;
+    }
+
+    if (original.max_post_length !== updated.max_post_length) {
+        patch.max_post_length = updated.max_post_length ?? null;
+    }
+
+    if (JSON.stringify(original.post_formats) !== JSON.stringify(updated.post_formats)) {
+        patch.post_formats = updated.post_formats || null;
+    }
+
     if (original.prompt_template !== updated.prompt_template) {
         patch.prompt_template = updated.prompt_template;
     }
@@ -528,6 +706,31 @@ function extractJsonObject(text: string): string {
 
 function formatFrequency(frequency: string): string {
     return frequency.replace(/_/g, ' ');
+}
+
+function isActiveHoursOff(value: string): boolean {
+    return ['off', 'none', 'all day', ''].includes(value.trim().toLowerCase());
+}
+
+function formatNextRun(account: NostrAccount, now: Date): string {
+    const timezone = SchedulerService.isValidTimezone(account.timezone || '')
+        ? (account.timezone as string)
+        : 'UTC';
+    const nextRun = SchedulerService.getNextRunTimestamp(
+        account.last_run_at || 0,
+        SchedulerService.fromAccount(account),
+        now
+    );
+    const formatted = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+    }).format(new Date(nextRun));
+    return `${formatted} (${timezone})`;
 }
 
 function uniqueStrings(values: string[]): string[] {

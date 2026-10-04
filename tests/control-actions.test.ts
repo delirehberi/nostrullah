@@ -294,3 +294,188 @@ describe('applyControlActions', () => {
         expect(result.summary[0]).toBe('Configured resources: none');
     });
 });
+
+describe('schedule control actions', () => {
+    const scheduledAccount: NostrAccount = {
+        ...baseAccount,
+        timezone: 'Europe/Istanbul',
+        active_hours: '07:00-23:00',
+        jitter_hours: 1,
+    };
+
+    it('updates timezone, active hours and jitter', () => {
+        const result = applyControlActions(scheduledAccount, [
+            { type: 'set_timezone', timezone: 'Europe/Berlin' },
+            { type: 'set_active_hours', active_hours: '08:30-22:00' },
+            { type: 'set_jitter', jitter_hours: 5 },
+        ]);
+
+        expect(result.patch).toEqual({
+            timezone: 'Europe/Berlin',
+            active_hours: '08:30-22:00',
+            jitter_hours: 5,
+        });
+    });
+
+    it('clears active hours with null or "off"', () => {
+        for (const value of [null, 'off']) {
+            const result = applyControlActions(scheduledAccount, [
+                { type: 'set_active_hours', active_hours: value },
+            ]);
+            expect(result.patch).toEqual({ active_hours: null });
+            expect(result.summary).toEqual(['removed active hours (posting all day)']);
+        }
+    });
+
+    it('validates schedule actions from the interpreter', () => {
+        expect(
+            validateInterpreterResponse(
+                JSON.stringify({
+                    actions: [
+                        { type: 'set_timezone', timezone: 'Europe/Istanbul' },
+                        { type: 'set_active_hours', active_hours: '22:00-02:00' },
+                        { type: 'set_jitter', jitter_hours: '3' },
+                    ],
+                })
+            )
+        ).toEqual([
+            { type: 'set_timezone', timezone: 'Europe/Istanbul' },
+            { type: 'set_active_hours', active_hours: '22:00-02:00' },
+            { type: 'set_jitter', jitter_hours: 3 },
+        ]);
+
+        for (const action of [
+            { type: 'set_timezone', timezone: 'Mars/Base' },
+            { type: 'set_active_hours', active_hours: '7-23' },
+            { type: 'set_jitter', jitter_hours: 7 },
+        ]) {
+            expect(() =>
+                validateInterpreterResponse(JSON.stringify({ actions: [action] }))
+            ).toThrow();
+        }
+    });
+
+    it('shows schedule settings and the next post time in show_details', () => {
+        const result = applyControlActions(
+            { ...scheduledAccount, jitter_hours: 0, last_run_at: 1789549200 },
+            [{ type: 'show_details' }]
+        );
+
+        expect(result.summary[0]).toContain('Timezone: Europe/Istanbul');
+        expect(result.summary[0]).toContain('Active hours: 07:00-23:00');
+        expect(result.summary[0]).toContain('Random delay: up to 0 h');
+        expect(result.summary[0]).toMatch(/Next post: .+ \(Europe\/Istanbul\)/);
+    });
+});
+
+describe('set_post_formats control action', () => {
+    it('accepts a list, weights, default and off', () => {
+        expect(
+            validateInterpreterResponse(
+                JSON.stringify({
+                    actions: [
+                        { type: 'set_post_formats', post_formats: ['question', 'tip'] },
+                        { type: 'set_post_formats', post_formats: { tip: 3, hot_take: 1 } },
+                        { type: 'set_post_formats', post_formats: 'default' },
+                        { type: 'set_post_formats', post_formats: 'off' },
+                    ],
+                })
+            )
+        ).toEqual([
+            { type: 'set_post_formats', post_formats: { question: 1, tip: 1 } },
+            { type: 'set_post_formats', post_formats: { tip: 3, hot_take: 1 } },
+            { type: 'set_post_formats', post_formats: 'default' },
+            { type: 'set_post_formats', post_formats: 'off' },
+        ]);
+    });
+
+    it('rejects unknown formats and all-zero weights', () => {
+        for (const post_formats of [['poem'], { tip: 0 }, { poem: 2 }]) {
+            expect(() =>
+                validateInterpreterResponse(
+                    JSON.stringify({ actions: [{ type: 'set_post_formats', post_formats }] })
+                )
+            ).toThrow();
+        }
+    });
+
+    it('builds patches for weights, off and default', () => {
+        expect(
+            applyControlActions(baseAccount, [
+                { type: 'set_post_formats', post_formats: { tip: 2 } },
+            ]).patch
+        ).toEqual({ post_formats: { tip: 2 } });
+        expect(
+            applyControlActions(baseAccount, [{ type: 'set_post_formats', post_formats: 'off' }])
+                .patch
+        ).toEqual({ post_formats: {} });
+        expect(
+            applyControlActions({ ...baseAccount, post_formats: { tip: 2 } }, [
+                { type: 'set_post_formats', post_formats: 'default' },
+            ]).patch
+        ).toEqual({ post_formats: null });
+    });
+});
+
+describe('set_max_length control action', () => {
+    it('validates the range and accepts default', () => {
+        expect(
+            validateInterpreterResponse(
+                JSON.stringify({
+                    actions: [
+                        { type: 'set_max_length', max_post_length: '600' },
+                        { type: 'set_max_length', max_post_length: 'default' },
+                    ],
+                })
+            )
+        ).toEqual([
+            { type: 'set_max_length', max_post_length: 600 },
+            { type: 'set_max_length', max_post_length: 'default' },
+        ]);
+
+        for (const max_post_length of [50, 2500, 'long']) {
+            expect(() =>
+                validateInterpreterResponse(
+                    JSON.stringify({ actions: [{ type: 'set_max_length', max_post_length }] })
+                )
+            ).toThrow();
+        }
+    });
+
+    it('builds patches and shows the limit in details', () => {
+        expect(
+            applyControlActions(baseAccount, [{ type: 'set_max_length', max_post_length: 600 }])
+                .patch
+        ).toEqual({ max_post_length: 600 });
+
+        const reset = applyControlActions({ ...baseAccount, max_post_length: 600 }, [
+            { type: 'set_max_length', max_post_length: 'default' },
+            { type: 'show_details' },
+        ]);
+        expect(reset.patch).toEqual({ max_post_length: null });
+        expect(reset.summary[1]).toContain('Max post length: default (MAX_POST_LENGTH or 500)');
+    });
+});
+
+describe('show_stats control action', () => {
+    it('is a query action that renders the provided engagement stats', () => {
+        expect(
+            validateInterpreterResponse(JSON.stringify({ actions: [{ type: 'show_stats' }] }))
+        ).toEqual([{ type: 'show_stats' }]);
+
+        const result = applyControlActions(baseAccount, [{ type: 'show_stats' }], {
+            engagementStats: {
+                posts: 3,
+                reactions: 5,
+                reposts: 1,
+                replies: 2,
+                zaps: 0,
+                zapSats: 0,
+                checkedAt: 1_790_000_000,
+            },
+        });
+
+        expect(result.patch).toEqual({});
+        expect(result.summary[0]).toContain('Reactions: 5');
+    });
+});
