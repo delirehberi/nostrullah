@@ -71,6 +71,18 @@ export type ControlAction =
           frequency: string;
       }
     | {
+          type: 'set_timezone';
+          timezone: string;
+      }
+    | {
+          type: 'set_active_hours';
+          active_hours: string | null;
+      }
+    | {
+          type: 'set_jitter';
+          jitter_minutes: number;
+      }
+    | {
           type: 'set_relays';
           relays: string[];
       }
@@ -112,6 +124,12 @@ export interface NostrAccount {
     last_run_at?: number;
     personality?: Personality;
     is_active?: boolean;
+    /** IANA timezone the frequency and active hours are evaluated in. */
+    timezone?: string;
+    /** `HH:MM-HH:MM` posting window in `timezone`; unset means all day. */
+    active_hours?: string;
+    /** Maximum random delay in minutes added after each scheduled slot. */
+    jitter_minutes?: number;
     control_enabled?: boolean;
     control_admin_pubkeys?: string[];
     control_last_checked_at?: number;

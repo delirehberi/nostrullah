@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SchedulerService, PRESET_FREQUENCIES } from '../src/scheduler';
+import { SchedulerService, PRESET_FREQUENCIES, ScheduleSettings } from '../src/scheduler';
 
 describe('SchedulerService.toCronExpression', () => {
     it('maps standard presets correctly', () => {
@@ -130,20 +130,20 @@ describe('SchedulerService.isDue (Deterministic Slot Matching & Zero Drift)', ()
         ).toBe(true);
     });
 
-    it('correctly handles twice_a_day preset (00:00 & 12:00)', () => {
-        const lastRun = Math.floor(new Date('2026-09-16T00:00:05Z').getTime() / 1000);
+    it('correctly handles twice_a_day preset (09:00 & 18:00)', () => {
+        const lastRun = Math.floor(new Date('2026-09-16T09:00:05Z').getTime() / 1000);
 
-        // Between 01:00 and 11:00 -> not due
-        expect(
-            SchedulerService.isDue(lastRun, 'twice_a_day', new Date('2026-09-16T06:00:00Z'))
-        ).toBe(false);
-        expect(
-            SchedulerService.isDue(lastRun, 'twice_a_day', new Date('2026-09-16T11:00:00Z'))
-        ).toBe(false);
-
-        // At 12:00:00 -> due
+        // Between the two slots -> not due
         expect(
             SchedulerService.isDue(lastRun, 'twice_a_day', new Date('2026-09-16T12:00:00Z'))
+        ).toBe(false);
+        expect(
+            SchedulerService.isDue(lastRun, 'twice_a_day', new Date('2026-09-16T17:00:00Z'))
+        ).toBe(false);
+
+        // At 18:00:00 -> due
+        expect(
+            SchedulerService.isDue(lastRun, 'twice_a_day', new Date('2026-09-16T18:00:00Z'))
         ).toBe(true);
     });
 
@@ -178,5 +178,136 @@ describe('SchedulerService.getNextRunTimestamp', () => {
 
         const nextRun = SchedulerService.getNextRunTimestamp(lastRun, 'every_2_hours', now);
         expect(nextRun).toBe(new Date('2026-09-16T16:00:00Z').getTime());
+    });
+});
+
+describe('SchedulerService account schedule settings', () => {
+    const seconds = (iso: string): number => Math.floor(new Date(iso).getTime() / 1000);
+    const istanbul = (overrides: Partial<ScheduleSettings> = {}): ScheduleSettings => ({
+        frequency: 'daily',
+        timezone: 'Europe/Istanbul',
+        seed: 1,
+        ...overrides,
+    });
+
+    it('evaluates presets in the account timezone', () => {
+        // daily = 09:00 Istanbul = 06:00 UTC
+        const lastRun = seconds('2026-09-15T06:00:10Z');
+        expect(SchedulerService.isDue(lastRun, istanbul(), new Date('2026-09-16T05:59:00Z'))).toBe(
+            false
+        );
+        expect(SchedulerService.isDue(lastRun, istanbul(), new Date('2026-09-16T06:00:00Z'))).toBe(
+            true
+        );
+    });
+
+    it('does not post outside active hours, including for brand-new accounts', () => {
+        const schedule = istanbul({ frequency: 'hourly', activeHours: '07:00-23:00' });
+        // 02:00 Istanbul
+        expect(SchedulerService.isDue(0, schedule, new Date('2026-09-15T23:00:00Z'))).toBe(false);
+        expect(
+            SchedulerService.isDue(
+                seconds('2026-09-15T19:00:10Z'),
+                schedule,
+                new Date('2026-09-15T23:00:00Z')
+            )
+        ).toBe(false);
+    });
+
+    it('posts a slot missed overnight once when the window opens', () => {
+        // 03:00 Istanbul slot, window opens 07:00 Istanbul (04:00 UTC)
+        const schedule = istanbul({ frequency: '0 3 * * *', activeHours: '07:00-23:00' });
+        const lastRun = seconds('2026-09-15T04:00:30Z');
+
+        expect(SchedulerService.isDue(lastRun, schedule, new Date('2026-09-16T03:56:00Z'))).toBe(
+            false
+        );
+        expect(SchedulerService.isDue(lastRun, schedule, new Date('2026-09-16T04:00:00Z'))).toBe(
+            true
+        );
+
+        const ranAtOpening = seconds('2026-09-16T04:00:20Z');
+        expect(
+            SchedulerService.isDue(ranAtOpening, schedule, new Date('2026-09-16T12:00:00Z'))
+        ).toBe(false);
+    });
+
+    it('supports windows that cross midnight', () => {
+        const schedule = istanbul({ frequency: 'hourly', activeHours: '22:00-02:00' });
+        const lastRun = seconds('2026-09-15T00:00:10Z');
+        // 01:00 Istanbul -> inside, 12:00 Istanbul -> outside
+        expect(SchedulerService.isDue(lastRun, schedule, new Date('2026-09-15T22:00:00Z'))).toBe(
+            true
+        );
+        expect(SchedulerService.isDue(lastRun, schedule, new Date('2026-09-15T09:00:00Z'))).toBe(
+            false
+        );
+    });
+
+    it('delays each slot by a stable jitter within the configured bound', () => {
+        const lastRun = seconds('2026-09-15T06:30:00Z');
+        const slot = new Date('2026-09-16T06:00:00Z').getTime();
+
+        for (let seed = 1; seed <= 25; seed++) {
+            const schedule = istanbul({ jitterMinutes: 15, seed });
+            const dueAt = SchedulerService.getNextRunTimestamp(
+                lastRun,
+                schedule,
+                new Date('2026-09-16T05:00:00Z')
+            );
+
+            expect(dueAt).toBeGreaterThanOrEqual(slot);
+            expect(dueAt).toBeLessThanOrEqual(slot + 15 * 60 * 1000);
+            // Stable across cron ticks
+            expect(
+                SchedulerService.getNextRunTimestamp(
+                    lastRun,
+                    schedule,
+                    new Date('2026-09-16T05:30:00Z')
+                )
+            ).toBe(dueAt);
+            expect(SchedulerService.isDue(lastRun, schedule, new Date(dueAt - 60_000))).toBe(false);
+            expect(SchedulerService.isDue(lastRun, schedule, new Date(dueAt))).toBe(true);
+        }
+    });
+
+    it('reports the next window opening as the next run when outside active hours', () => {
+        const schedule = istanbul({ frequency: 'hourly', activeHours: '07:00-23:00' });
+        const lastRun = seconds('2026-09-15T19:00:10Z');
+        // 02:00 Istanbul -> next run 07:00 Istanbul (04:00 UTC)
+        expect(
+            SchedulerService.getNextRunTimestamp(
+                lastRun,
+                schedule,
+                new Date('2026-09-15T23:00:00Z')
+            )
+        ).toBe(new Date('2026-09-16T04:00:00Z').getTime());
+    });
+
+    it('falls back to UTC for an invalid timezone', () => {
+        const lastRun = seconds('2026-09-15T09:00:10Z');
+        const schedule: ScheduleSettings = { frequency: 'daily', timezone: 'Mars/Base' };
+        expect(SchedulerService.isDue(lastRun, schedule, new Date('2026-09-16T09:00:00Z'))).toBe(
+            true
+        );
+        expect(SchedulerService.isDue(lastRun, schedule, new Date('2026-09-16T06:00:00Z'))).toBe(
+            false
+        );
+    });
+});
+
+describe('SchedulerService validators', () => {
+    it('validates timezones', () => {
+        expect(SchedulerService.isValidTimezone('Europe/Istanbul')).toBe(true);
+        expect(SchedulerService.isValidTimezone('UTC')).toBe(true);
+        expect(SchedulerService.isValidTimezone('Mars/Base')).toBe(false);
+        expect(SchedulerService.isValidTimezone('')).toBe(false);
+    });
+
+    it('validates active hours', () => {
+        expect(SchedulerService.isValidActiveHours('07:00-23:00')).toBe(true);
+        expect(SchedulerService.isValidActiveHours('22:30-02:00')).toBe(true);
+        expect(SchedulerService.isValidActiveHours('7-23')).toBe(false);
+        expect(SchedulerService.isValidActiveHours('24:00-02:00')).toBe(false);
     });
 });

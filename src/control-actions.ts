@@ -9,13 +9,16 @@ import {
     RemoveResourceMatch,
     Resource,
 } from './types';
-import { SchedulerService } from './scheduler';
+import { MAX_JITTER_MINUTES, SchedulerService } from './scheduler';
 
 export interface AccountConfigPatch {
     name?: string;
     relays?: string[];
     categories?: string[];
     frequency?: string;
+    timezone?: string;
+    active_hours?: string | null;
+    jitter_minutes?: number;
     data_resources?: Resource[];
     prompt_template?: string;
     personality?: Personality;
@@ -182,6 +185,44 @@ const baseControlActionSchema = z.discriminatedUnion('type', [
         .strict(),
     z
         .object({
+            type: z.literal('set_timezone'),
+            timezone: z
+                .string()
+                .trim()
+                .refine((val) => SchedulerService.isValidTimezone(val), {
+                    message: 'Must be a valid IANA timezone (e.g. Europe/Istanbul, UTC)',
+                }),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_active_hours'),
+            active_hours: z
+                .string()
+                .trim()
+                .refine(
+                    (val) => isActiveHoursOff(val) || SchedulerService.isValidActiveHours(val),
+                    {
+                        message: 'Must be HH:MM-HH:MM (e.g. 07:00-23:00) or "off"',
+                    }
+                )
+                .nullable(),
+        })
+        .strict(),
+    z
+        .object({
+            type: z.literal('set_jitter'),
+            jitter_minutes: z.coerce
+                .number()
+                .int()
+                .min(0)
+                .max(MAX_JITTER_MINUTES, {
+                    message: `Must be between 0 and ${MAX_JITTER_MINUTES} minutes`,
+                }),
+        })
+        .strict(),
+    z
+        .object({
             type: z.literal('set_relays'),
             relays: z.array(relayUrlSchema).min(1),
         })
@@ -259,7 +300,7 @@ export function formatResources(resources?: Resource[]): string {
     return `Configured resources (${resources.length}):\n${items.join('\n')}`;
 }
 
-export function formatAccountDetails(account: NostrAccount): string {
+export function formatAccountDetails(account: NostrAccount, now: Date = new Date()): string {
     const categories =
         account.categories && account.categories.length > 0
             ? account.categories.join(', ')
@@ -273,6 +314,10 @@ export function formatAccountDetails(account: NostrAccount): string {
         `Name: ${account.name || 'unnamed'}`,
         `Status: ${account.is_active ? 'active' : 'inactive'}`,
         `Posting frequency: ${frequency}`,
+        `Timezone: ${account.timezone || 'UTC'}`,
+        `Active hours: ${account.active_hours || 'all day'}`,
+        `Random delay: up to ${account.jitter_minutes || 0} min`,
+        `Next post: ${formatNextRun(account, now)}`,
         `Personality: ${account.personality || 'unspecified'}`,
         `Categories: ${categories}`,
         `Relays: ${relays}`,
@@ -288,7 +333,10 @@ export function formatSupportedCommands(): string {
         '• show resources - List configured RSS feeds, scraping feeds, and quote sources',
         '• what commands do you support / help - View this command guide',
         '• set personality <informative|humorous|enthusiastic|sarcastic|philosophical> - Update tone',
-        '• set frequency <hourly|every_2_hours|twice_a_day|daily> - Update posting schedule',
+        '• set frequency <hourly|every_2_hours|twice_a_day|daily|cron> - Update posting schedule (daily = 09:00, twice a day = 09:00 & 18:00)',
+        '• set timezone <Area/City> - Timezone for the schedule and active hours (e.g. Europe/Istanbul)',
+        '• set active hours <HH:MM-HH:MM|off> - Only post inside this window (e.g. 07:00-23:00)',
+        '• set random delay <0-60> - Max minutes of random delay added to each post',
         '• set active <true|false> - Activate or pause the bot',
         '• set categories <cat1, cat2, ...> - Update topic categories',
         '• set name <name> - Update bot display name',
@@ -345,6 +393,25 @@ export function applyControlActions(
             case 'set_frequency':
                 updatedAccount.frequency = action.frequency;
                 summary.push(`set posting frequency to ${formatFrequency(action.frequency)}`);
+                break;
+            case 'set_timezone':
+                updatedAccount.timezone = action.timezone;
+                summary.push(`set timezone to ${action.timezone}`);
+                break;
+            case 'set_active_hours':
+                updatedAccount.active_hours =
+                    action.active_hours && !isActiveHoursOff(action.active_hours)
+                        ? action.active_hours
+                        : undefined;
+                summary.push(
+                    updatedAccount.active_hours
+                        ? `set active hours to ${updatedAccount.active_hours}`
+                        : 'removed active hours (posting all day)'
+                );
+                break;
+            case 'set_jitter':
+                updatedAccount.jitter_minutes = action.jitter_minutes;
+                summary.push(`set random delay to up to ${action.jitter_minutes} min`);
                 break;
             case 'set_relays':
                 updatedAccount.relays = uniqueStrings(action.relays);
@@ -417,6 +484,9 @@ export function buildControlSchemaPrompt(): string {
         '• set_categories: {"type":"set_categories","categories":["<cat1>","<cat2>"]}.',
         `• set_personality: {"type":"set_personality","personality":"<value>"}. Allowed values: ${PERSONALITY_VALUES.join(', ')}.`,
         '• set_frequency: {"type":"set_frequency","frequency":"<preset or cron>"}. Presets: hourly, every_2_hours, twice_a_day, daily. Cron: 5-part cron (e.g. 0 9,21 * * *).',
+        '• set_timezone: {"type":"set_timezone","timezone":"<IANA timezone, e.g. Europe/Istanbul>"}.',
+        '• set_active_hours: {"type":"set_active_hours","active_hours":"HH:MM-HH:MM"}. Use null to remove the window and post all day.',
+        '• set_jitter: {"type":"set_jitter","jitter_minutes":<integer 0-60>}. Random delay added to each scheduled post.',
         '• set_relays: {"type":"set_relays","relays":["<ws/wss url>"]}.',
         '• add_resource: {"type":"add_resource","resource":{"type":"rss"|"scraping","url":"<http/https url>","weight":<optional number>}} or {"type":"add_resource","resource":{"type":"quote","categories":["<cat1>"],"weight":<optional number>}}.',
         '• remove_resource: {"type":"remove_resource","match":{"type":"rss"|"scraping","url":"<url>"}} or {"type":"remove_resource","match":{"type":"quote","categories":["<cat1>"]}}.',
@@ -491,6 +561,18 @@ function buildPatch(original: NostrAccount, updated: NostrAccount): AccountConfi
         patch.frequency = updated.frequency;
     }
 
+    if (original.timezone !== updated.timezone) {
+        patch.timezone = updated.timezone;
+    }
+
+    if (original.active_hours !== updated.active_hours) {
+        patch.active_hours = updated.active_hours || null;
+    }
+
+    if (original.jitter_minutes !== updated.jitter_minutes) {
+        patch.jitter_minutes = updated.jitter_minutes;
+    }
+
     if (original.prompt_template !== updated.prompt_template) {
         patch.prompt_template = updated.prompt_template;
     }
@@ -528,6 +610,31 @@ function extractJsonObject(text: string): string {
 
 function formatFrequency(frequency: string): string {
     return frequency.replace(/_/g, ' ');
+}
+
+function isActiveHoursOff(value: string): boolean {
+    return ['off', 'none', 'all day', ''].includes(value.trim().toLowerCase());
+}
+
+function formatNextRun(account: NostrAccount, now: Date): string {
+    const timezone = SchedulerService.isValidTimezone(account.timezone || '')
+        ? (account.timezone as string)
+        : 'UTC';
+    const nextRun = SchedulerService.getNextRunTimestamp(
+        account.last_run_at || 0,
+        SchedulerService.fromAccount(account),
+        now
+    );
+    const formatted = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+    }).format(new Date(nextRun));
+    return `${formatted} (${timezone})`;
 }
 
 function uniqueStrings(values: string[]): string[] {

@@ -33,6 +33,22 @@ function createDbMock(firstResult?: any) {
 }
 
 describe('StorageService control-plane helpers', () => {
+    it('serializes schedule settings and clears active hours with NULL', async () => {
+        const { db, statements } = createDbMock();
+        const storage = new StorageService({ DB: db } as any);
+
+        await storage.updateAccountConfiguration(7, {
+            timezone: 'Europe/Berlin',
+            active_hours: null,
+            jitter_minutes: 0,
+        });
+
+        expect(statements[0].sql).toContain('timezone = ?');
+        expect(statements[0].sql).toContain('active_hours = ?');
+        expect(statements[0].sql).toContain('jitter_minutes = ?');
+        expect(statements[0].values).toEqual(['Europe/Berlin', null, 0, 7]);
+    });
+
     it('serializes account config updates into D1 columns', async () => {
         const { db, statements } = createDbMock();
         const storage = new StorageService({ DB: db } as any);

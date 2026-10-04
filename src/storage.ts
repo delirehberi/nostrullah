@@ -1,6 +1,6 @@
 import { Env } from './types';
 import { AccountConfigPatch } from './control-actions';
-import { SchedulerService } from './scheduler';
+import { ScheduleSettings, SchedulerService } from './scheduler';
 
 export interface ProcessedControlEventRecord {
     eventId: string;
@@ -36,12 +36,20 @@ export class StorageService {
             .run();
     }
 
-    shouldRun(lastRun: number, frequency: string, now: Date = new Date()): boolean {
-        return SchedulerService.isDue(lastRun, frequency, now);
+    shouldRun(
+        lastRun: number,
+        schedule: string | ScheduleSettings,
+        now: Date = new Date()
+    ): boolean {
+        return SchedulerService.isDue(lastRun, schedule, now);
     }
 
-    getNextRunTimestamp(lastRun: number, frequency: string, now: Date = new Date()): number {
-        return SchedulerService.getNextRunTimestamp(lastRun, frequency, now);
+    getNextRunTimestamp(
+        lastRun: number,
+        schedule: string | ScheduleSettings,
+        now: Date = new Date()
+    ): number {
+        return SchedulerService.getNextRunTimestamp(lastRun, schedule, now);
     }
 
     normalizeLastRunTimestamp(lastRun: number): number {
@@ -218,6 +226,21 @@ export class StorageService {
         if (Object.prototype.hasOwnProperty.call(patch, 'personality')) {
             assignments.push('personality = ?');
             values.push(patch.personality || null);
+        }
+
+        if (patch.timezone) {
+            assignments.push('timezone = ?');
+            values.push(patch.timezone);
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, 'active_hours')) {
+            assignments.push('active_hours = ?');
+            values.push(patch.active_hours || null);
+        }
+
+        if (patch.jitter_minutes !== undefined) {
+            assignments.push('jitter_minutes = ?');
+            values.push(patch.jitter_minutes);
         }
 
         if (Object.prototype.hasOwnProperty.call(patch, 'is_active')) {

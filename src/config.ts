@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Env, NostrAccount } from './types';
 import { resourceSchema } from './control-actions';
+import { DEFAULT_ACTIVE_HOURS, DEFAULT_JITTER_MINUTES, DEFAULT_TIMEZONE } from './scheduler';
 
 interface GetAccountsOptions {
     includeInactive?: boolean;
@@ -51,6 +52,13 @@ export const getAccounts = async (
             last_run_at: row.last_run_at || 0,
             personality: row.personality || undefined,
             is_active: Boolean(row.is_active),
+            // Columns from migration 0006; fall back to defaults if it is not applied yet.
+            timezone: row.timezone || DEFAULT_TIMEZONE,
+            active_hours:
+                row.active_hours === undefined
+                    ? DEFAULT_ACTIVE_HOURS
+                    : row.active_hours || undefined,
+            jitter_minutes: row.jitter_minutes ?? DEFAULT_JITTER_MINUTES,
             control_enabled: Boolean(row.control_enabled),
             control_admin_pubkeys: safeParseJson(row.control_admin_pubkeys, stringArraySchema, []),
             control_last_checked_at: row.control_last_checked_at || 0,

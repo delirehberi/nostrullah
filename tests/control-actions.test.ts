@@ -294,3 +294,76 @@ describe('applyControlActions', () => {
         expect(result.summary[0]).toBe('Configured resources: none');
     });
 });
+
+describe('schedule control actions', () => {
+    const scheduledAccount: NostrAccount = {
+        ...baseAccount,
+        timezone: 'Europe/Istanbul',
+        active_hours: '07:00-23:00',
+        jitter_minutes: 15,
+    };
+
+    it('updates timezone, active hours and jitter', () => {
+        const result = applyControlActions(scheduledAccount, [
+            { type: 'set_timezone', timezone: 'Europe/Berlin' },
+            { type: 'set_active_hours', active_hours: '08:30-22:00' },
+            { type: 'set_jitter', jitter_minutes: 5 },
+        ]);
+
+        expect(result.patch).toEqual({
+            timezone: 'Europe/Berlin',
+            active_hours: '08:30-22:00',
+            jitter_minutes: 5,
+        });
+    });
+
+    it('clears active hours with null or "off"', () => {
+        for (const value of [null, 'off']) {
+            const result = applyControlActions(scheduledAccount, [
+                { type: 'set_active_hours', active_hours: value },
+            ]);
+            expect(result.patch).toEqual({ active_hours: null });
+            expect(result.summary).toEqual(['removed active hours (posting all day)']);
+        }
+    });
+
+    it('validates schedule actions from the interpreter', () => {
+        expect(
+            validateInterpreterResponse(
+                JSON.stringify({
+                    actions: [
+                        { type: 'set_timezone', timezone: 'Europe/Istanbul' },
+                        { type: 'set_active_hours', active_hours: '22:00-02:00' },
+                        { type: 'set_jitter', jitter_minutes: '10' },
+                    ],
+                })
+            )
+        ).toEqual([
+            { type: 'set_timezone', timezone: 'Europe/Istanbul' },
+            { type: 'set_active_hours', active_hours: '22:00-02:00' },
+            { type: 'set_jitter', jitter_minutes: 10 },
+        ]);
+
+        for (const action of [
+            { type: 'set_timezone', timezone: 'Mars/Base' },
+            { type: 'set_active_hours', active_hours: '7-23' },
+            { type: 'set_jitter', jitter_minutes: 90 },
+        ]) {
+            expect(() =>
+                validateInterpreterResponse(JSON.stringify({ actions: [action] }))
+            ).toThrow();
+        }
+    });
+
+    it('shows schedule settings and the next post time in show_details', () => {
+        const result = applyControlActions(
+            { ...scheduledAccount, jitter_minutes: 0, last_run_at: 1789549200 },
+            [{ type: 'show_details' }]
+        );
+
+        expect(result.summary[0]).toContain('Timezone: Europe/Istanbul');
+        expect(result.summary[0]).toContain('Active hours: 07:00-23:00');
+        expect(result.summary[0]).toContain('Random delay: up to 0 min');
+        expect(result.summary[0]).toMatch(/Next post: .+ \(Europe\/Istanbul\)/);
+    });
+});

@@ -9,6 +9,7 @@ import { ResourceService } from './resources';
 import { ContentSimilarityService } from './content-similarity';
 import { ControlProcessor } from './control';
 import { buildHashtagTags } from './hashtags';
+import { SchedulerService } from './scheduler';
 
 const PROMPT_HISTORY_LIMIT = 20;
 const SIMILARITY_HISTORY_LIMIT = 30;
@@ -176,13 +177,15 @@ async function processScheduledAccount(options: {
         const pubKey = NostrService.getPublicKeyFromPrivate(account.privateKey);
         const lastRun = account.last_run_at || 0;
 
-        if (!storage.shouldRun(lastRun, account.frequency)) {
+        const schedule = SchedulerService.fromAccount(account);
+        if (!storage.shouldRun(lastRun, schedule)) {
             const nextRunAt = new Date(
-                storage.getNextRunTimestamp(lastRun, account.frequency)
+                storage.getNextRunTimestamp(lastRun, schedule)
             ).toISOString();
             console.log(
                 `Skipping account ${pubKey.slice(0, 8)}... - not time yet ` +
-                    `(frequency=${account.frequency}, lastRun=${lastRun}, nextRunAt=${nextRunAt})`
+                    `(frequency=${account.frequency}, timezone=${account.timezone}, ` +
+                    `activeHours=${account.active_hours || 'all day'}, lastRun=${lastRun}, nextRunAt=${nextRunAt})`
             );
             return;
         }

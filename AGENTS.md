@@ -29,7 +29,7 @@ This project is a headless Nostr bot running on Cloudflare Workers.
 1. The cron trigger invokes `scheduled()` in `src/index.ts`.
 2. `getAccounts()` in `src/config.ts` loads all active accounts from the `accounts` table.
 3. Each account is processed in `ctx.waitUntil(...)`.
-4. The worker checks whether the account should run now using `StorageService.shouldRun()`.
+4. The worker checks whether the account should run now using `StorageService.shouldRun()` (`src/scheduler.ts`): the frequency is evaluated in the account's `timezone`, nothing is posted outside `active_hours` (a slot missed overnight posts once when the window opens), and each slot is delayed by a stable random 0..`jitter_minutes` offset.
 5. The worker loads recent post history from `post_history`.
 6. The worker optionally fetches external resource context. Resources are tried in weighted-random order (up to 3) until one returns usable content; RSS items already listed in `shared_items` are skipped. If none succeed, the post is generated without resource context.
 7. `ContentGenerator` builds the prompt and calls Cloudflare AI.
@@ -134,6 +134,11 @@ The worker currently depends on these D1 tables:
 - `is_active`
 - `created_at`
 - `personality`
+- `timezone` (IANA name, default `Europe/Istanbul`)
+- `active_hours` (`HH:MM-HH:MM` in `timezone`, default `07:00-23:00`; `NULL` = all day)
+- `jitter_minutes` (0-60, default `15`)
+
+Frequency presets (in the account's timezone): `hourly`, `every_2_hours`, `twice_a_day` (09:00 and 18:00), `daily` (09:00); any 5-field cron expression is also accepted.
 
 ### `post_history`
 
