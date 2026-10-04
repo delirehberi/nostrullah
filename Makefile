@@ -2,9 +2,9 @@
 
 # --- Variables ---
 # Extract private keys from keys.json and assign them to variables
-TECH_KEY := $(shell cat keys.json | jq -r '.[0].privateKey')
-SCIENCE_KEY := $(shell cat keys.json | jq -r '.[1].privateKey')
-ART_KEY := $(shell cat keys.json | jq -r '.[2].privateKey')
+TECH_KEY := ""
+SCIENCE_KEY := ""
+ART_KEY := ""
 
 # --- Default ---
 .DEFAULT_GOAL := help
