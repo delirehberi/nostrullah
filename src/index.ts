@@ -1,5 +1,5 @@
 import { ScheduledEvent, ExecutionContext, MessageBatch, Queue } from '@cloudflare/workers-types';
-import { Env, ResourceContext } from './types';
+import { Env, NostrAccount, PostFormat, ResourceContext } from './types';
 import { getAccounts } from './config';
 import { ContentGenerator } from './ai';
 import { NostrService } from './nostr';
@@ -10,6 +10,11 @@ import { ContentSimilarityService } from './content-similarity';
 import { ControlProcessor } from './control';
 import { buildHashtagTags } from './hashtags';
 import { SchedulerService } from './scheduler';
+import {
+    POST_FORMAT_INSTRUCTIONS,
+    isFormatRotationEnabled,
+    selectPostFormat,
+} from './post-formats';
 
 const PROMPT_HISTORY_LIMIT = 20;
 const SIMILARITY_HISTORY_LIMIT = 30;
@@ -57,7 +62,7 @@ export async function runScheduled(
 export default {
     async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext): Promise<void> {
         for (const message of batch.messages) {
-            const { account, content, targetRelays, sourceUrl, sourceTitle } = message.body;
+            const { account, content, targetRelays, sourceUrl, sourceTitle, format } = message.body;
             try {
                 const publishResult = await NostrService.publishEvent(
                     { ...account, relays: targetRelays },
@@ -73,7 +78,8 @@ export default {
                         account.id,
                         content,
                         publishResult.eventId,
-                        { context: '', sourceUrl, sourceTitle }
+                        { context: '', sourceUrl, sourceTitle },
+                        format
                     );
                     message.ack();
                 } else {
@@ -119,6 +125,7 @@ export default {
                     });
                 }
                 const context = resourceContext.context;
+                const format = await choosePostFormat(storage, account, resourceContext);
 
                 const generatedPost = await generateValidatedPost({
                     generator,
@@ -128,6 +135,7 @@ export default {
                     context,
                     promptTemplate: account.prompt_template,
                     personality: account.personality,
+                    formatInstruction: format ? POST_FORMAT_INSTRUCTIONS[format] : undefined,
                     similarityChecker: similarityService,
                 });
                 const content = generatedPost.content;
@@ -140,6 +148,7 @@ export default {
                     last_run: account.last_run_at,
                     context_used: !!context,
                     source_url: resourceContext.sourceUrl,
+                    format: format || null,
                     account_details: {
                         prompt: account.prompt_template,
                         resources: account.data_resources,
@@ -208,6 +217,10 @@ async function processScheduledAccount(options: {
             });
         }
         const context = resourceContext.context;
+        const format = await choosePostFormat(storage, account, resourceContext);
+        if (format) {
+            console.log(`Using post format ${format} for ${pubKey.slice(0, 8)}...`);
+        }
 
         const generatedPost = await generateValidatedPost({
             generator,
@@ -217,6 +230,7 @@ async function processScheduledAccount(options: {
             context,
             promptTemplate: account.prompt_template,
             personality: account.personality,
+            formatInstruction: format ? POST_FORMAT_INSTRUCTIONS[format] : undefined,
             similarityChecker: similarityService,
         });
         const content = generatedPost.content;
@@ -257,7 +271,8 @@ async function processScheduledAccount(options: {
                 account.id,
                 content,
                 publishResult.eventId,
-                resourceContext
+                resourceContext,
+                format
             );
         } else {
             console.error(`Failed to publish for ${pubKey.slice(0, 8)}... Enqueuing for retry.`);
@@ -268,12 +283,32 @@ async function processScheduledAccount(options: {
                     targetRelays,
                     sourceUrl: resourceContext.sourceUrl,
                     sourceTitle: resourceContext.sourceTitle,
+                    format,
                 });
             }
         }
     } catch (error) {
         console.error('Error processing account:', error);
     }
+}
+
+/**
+ * Picks this post's format, or undefined when rotation does not apply to the account
+ * (custom prompt template without `$$FORMAT$$`, or rotation switched off).
+ */
+async function choosePostFormat(
+    storage: StorageService,
+    account: NostrAccount,
+    resourceContext: ResourceContext
+): Promise<PostFormat | undefined> {
+    if (!account.id || !isFormatRotationEnabled(account.prompt_template)) {
+        return undefined;
+    }
+
+    return selectPostFormat(account.post_formats, {
+        hasLinkContext: Boolean(resourceContext.sourceUrl),
+        lastFormat: await storage.getLastPostFormat(account.id),
+    });
 }
 
 /**
@@ -285,10 +320,11 @@ async function recordSuccessfulPost(
     accountId: number,
     content: string,
     eventId: string,
-    resourceContext: ResourceContext
+    resourceContext: ResourceContext,
+    format?: PostFormat
 ): Promise<void> {
     await storage.updateLastRun(accountId);
-    await storage.addPostToHistory(accountId, content, eventId);
+    await storage.addPostToHistory(accountId, content, eventId, format);
     if (resourceContext.sourceUrl) {
         await storage.recordSharedItem(
             accountId,

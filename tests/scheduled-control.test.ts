@@ -9,6 +9,7 @@ const addPostToHistory = vi.fn();
 const fetchResources = vi.fn();
 const getSharedUrls = vi.fn();
 const recordSharedItem = vi.fn();
+const getLastPostFormat = vi.fn();
 const generateValidatedPost = vi.fn();
 const publishEvent = vi.fn();
 
@@ -32,6 +33,7 @@ vi.mock('../src/storage', () => ({
         addPostToHistory = addPostToHistory;
         getSharedUrls = getSharedUrls;
         recordSharedItem = recordSharedItem;
+        getLastPostFormat = getLastPostFormat;
     },
 }));
 
@@ -70,6 +72,7 @@ describe('runScheduled control ordering', () => {
         fetchResources.mockReset();
         getSharedUrls.mockReset();
         recordSharedItem.mockReset();
+        getLastPostFormat.mockReset();
         generateValidatedPost.mockReset();
         publishEvent.mockReset();
 
@@ -217,11 +220,62 @@ describe('runScheduled control ordering', () => {
         expect(addPostToHistory).toHaveBeenCalledWith(
             2,
             'fresh generated post #Bilim #YapayZeka',
-            'post-1'
+            'post-1',
+            undefined
         );
+        // Custom template without $$FORMAT$$: no format rotation
+        expect(generateValidatedPost).toHaveBeenCalledWith(
+            expect.objectContaining({ formatInstruction: undefined })
+        );
+        expect(getLastPostFormat).not.toHaveBeenCalled();
         expect(fetchResources).toHaveBeenCalledWith(state.data_resources, {
             excludeUrls: new Set(['https://example.com/old/']),
         });
         expect(recordSharedItem).toHaveBeenCalledWith(2, 'https://example.com/new/', 'New Article');
+    });
+
+    it('rotates post formats for accounts without a custom template and records the format', async () => {
+        const account = {
+            id: 3,
+            name: 'Bot',
+            privateKey: '1'.repeat(64),
+            relays: ['wss://relay.example'],
+            categories: ['technology'],
+            frequency: 'daily',
+            data_resources: [],
+            prompt_template: undefined,
+            personality: 'informative',
+            post_formats: { question: 1, tip: 1 },
+            is_active: true,
+            control_enabled: false,
+            control_admin_pubkeys: [],
+            control_last_checked_at: 0,
+            last_run_at: 0,
+        };
+
+        getAccounts.mockResolvedValue([account]);
+        processAccounts.mockResolvedValue(undefined);
+        getLastPostFormat.mockResolvedValue('question');
+        generateValidatedPost.mockResolvedValue({
+            content: 'İpucu: yedek alın.',
+            attempts: [{ content: 'İpucu: yedek alın.', invalidUrls: [] }],
+        });
+
+        const { runScheduled } = await import('../src/index');
+        const pending: Promise<void>[] = [];
+        await runScheduled(
+            {} as any,
+            { AI: { run: vi.fn() } as any, DB: {} as any } as any,
+            { waitUntil: (promise: Promise<void>) => pending.push(promise) } as any
+        );
+        await Promise.all(pending);
+
+        expect(getLastPostFormat).toHaveBeenCalledWith(3);
+        expect(generateValidatedPost).toHaveBeenCalledWith(
+            expect.objectContaining({
+                formatInstruction: expect.stringContaining('practical, actionable tip'),
+            })
+        );
+        expect(addPostToHistory).toHaveBeenCalledWith(3, 'İpucu: yedek alın.', 'post-1', 'tip');
     });
 });

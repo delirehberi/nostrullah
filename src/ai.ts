@@ -2,6 +2,7 @@ import { Ai } from '@cloudflare/workers-types';
 import { DEFAULT_AI_MODEL, Env, Personality } from './types';
 import { withRetry } from './utils';
 import { personalityTemplates } from '../prompts';
+import { FORMAT_PLACEHOLDER } from './post-formats';
 
 export function extractOutputText(response: any): string {
     let text: string;
@@ -57,7 +58,8 @@ export class ContentGenerator {
         context: string = '',
         promptTemplate?: string,
         personality?: Personality,
-        additionalGuidance?: string
+        additionalGuidance?: string,
+        formatInstruction?: string
     ): Promise<any> {
         // Fall back cleanly if the DB contains an unknown personality value.
         const normalizedPersonality: Personality =
@@ -80,6 +82,17 @@ export class ContentGenerator {
             inputPrompt = inputPrompt.replace('$$RESOURCES$$', context);
         } else if (context) {
             inputPrompt += `\n\nContext/News:\n${context}`;
+        }
+
+        // The placeholder is always removed; the instruction goes there when present,
+        // otherwise it is appended.
+        if (inputPrompt.includes(FORMAT_PLACEHOLDER)) {
+            inputPrompt = inputPrompt.replace(
+                FORMAT_PLACEHOLDER,
+                formatInstruction ? `Post format: ${formatInstruction}` : ''
+            );
+        } else if (formatInstruction) {
+            inputPrompt += `\n\nPost format for this post: ${formatInstruction}`;
         }
 
         if (inputPrompt.includes('$$CATEGORIES$$')) {

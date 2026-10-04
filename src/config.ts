@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Env, NostrAccount } from './types';
+import { Env, NostrAccount, POST_FORMAT_VALUES, PostFormatWeights } from './types';
 import { resourceSchema } from './control-actions';
 import { DEFAULT_ACTIVE_HOURS, DEFAULT_JITTER_MINUTES, DEFAULT_TIMEZONE } from './scheduler';
 
@@ -9,6 +9,7 @@ interface GetAccountsOptions {
 
 const stringArraySchema = z.array(z.string()).default([]);
 const resourcesArraySchema = z.array(resourceSchema).default([]);
+const postFormatsSchema = z.partialRecord(z.enum(POST_FORMAT_VALUES), z.number().min(0));
 
 const safeParseJson = <T>(
     jsonString: string | null | undefined,
@@ -59,6 +60,11 @@ export const getAccounts = async (
                     ? DEFAULT_ACTIVE_HOURS
                     : row.active_hours || undefined,
             jitter_minutes: row.jitter_minutes ?? DEFAULT_JITTER_MINUTES,
+            post_formats: safeParseJson<PostFormatWeights | undefined>(
+                row.post_formats,
+                postFormatsSchema,
+                undefined
+            ),
             control_enabled: Boolean(row.control_enabled),
             control_admin_pubkeys: safeParseJson(row.control_admin_pubkeys, stringArraySchema, []),
             control_last_checked_at: row.control_last_checked_at || 0,

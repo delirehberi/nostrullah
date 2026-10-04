@@ -12,7 +12,8 @@ export interface PostGenerator {
         context?: string,
         promptTemplate?: string,
         personality?: Personality,
-        additionalGuidance?: string
+        additionalGuidance?: string,
+        formatInstruction?: string
     ): Promise<string>;
 }
 
@@ -35,6 +36,8 @@ export interface GenerateValidatedPostOptions {
     context?: string;
     promptTemplate?: string;
     personality?: Personality;
+    /** Post format instruction, kept the same across retries. */
+    formatInstruction?: string;
     maxAttempts?: number;
     validateUrls?: (content: string) => Promise<{ valid: boolean; invalidUrls: string[] }>;
     similarityHistory?: string[];
@@ -59,7 +62,8 @@ export async function generateValidatedPost(
             options.context || '',
             options.promptTemplate,
             options.personality,
-            guidance
+            guidance,
+            options.formatInstruction
         );
         const validation = await validateUrls(content);
         const similarityResult = options.similarityChecker

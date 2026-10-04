@@ -87,10 +87,10 @@ describe('StorageService control-plane helpers', () => {
         const { db, statements } = createDbMock();
         const storage = new StorageService({ DB: db } as any);
 
-        await storage.addPostToHistory(3, 'hello nostr', 'event-123');
+        await storage.addPostToHistory(3, 'hello nostr', 'event-123', 'question');
 
         expect(statements[0].sql).toContain('INSERT INTO post_history');
-        expect(statements[0].values).toEqual([3, 'hello nostr', 'event-123']);
+        expect(statements[0].values).toEqual([3, 'hello nostr', 'event-123', 'question']);
     });
 
     it('records processed control events with audit metadata', async () => {

@@ -69,11 +69,29 @@ export class StorageService {
         return results.map((r: any) => r.content);
     }
 
-    async addPostToHistory(accountId: number, content: string, eventId?: string): Promise<void> {
-        await this.db
-            .prepare('INSERT INTO post_history (account_id, content, event_id) VALUES (?, ?, ?)')
-            .bind(accountId, content, eventId || null)
-            .run();
+    async addPostToHistory(
+        accountId: number,
+        content: string,
+        eventId?: string,
+        format?: string
+    ): Promise<void> {
+        try {
+            await this.db
+                .prepare(
+                    'INSERT INTO post_history (account_id, content, event_id, format) VALUES (?, ?, ?, ?)'
+                )
+                .bind(accountId, content, eventId || null, format || null)
+                .run();
+        } catch (error) {
+            // The format column comes from migration 0007; keep recording history without it.
+            console.error('Failed to store post format, saving history without it:', error);
+            await this.db
+                .prepare(
+                    'INSERT INTO post_history (account_id, content, event_id) VALUES (?, ?, ?)'
+                )
+                .bind(accountId, content, eventId || null)
+                .run();
+        }
 
         // Prune to keep only the most recent 200 posts per account.
         await this.db
@@ -138,6 +156,24 @@ export class StorageService {
 
     private getSharedItemsCutoff(now: Date): number {
         return Math.floor(now.getTime() / 1000) - StorageService.SHARED_ITEM_RETENTION_SECONDS;
+    }
+
+    /**
+     * Returns the format of the account's most recent post, if recorded.
+     */
+    async getLastPostFormat(accountId: number): Promise<string | undefined> {
+        try {
+            const result = await this.db
+                .prepare(
+                    'SELECT format FROM post_history WHERE account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1'
+                )
+                .bind(accountId)
+                .first<{ format: string | null }>();
+            return result?.format || undefined;
+        } catch (error) {
+            console.error(`Failed to load last post format for account ${accountId}:`, error);
+            return undefined;
+        }
     }
 
     async findAccountIdByPostEventId(eventId: string): Promise<number | null> {
@@ -241,6 +277,11 @@ export class StorageService {
         if (patch.jitter_minutes !== undefined) {
             assignments.push('jitter_minutes = ?');
             values.push(patch.jitter_minutes);
+        }
+
+        if (Object.prototype.hasOwnProperty.call(patch, 'post_formats')) {
+            assignments.push('post_formats = ?');
+            values.push(patch.post_formats ? JSON.stringify(patch.post_formats) : null);
         }
 
         if (Object.prototype.hasOwnProperty.call(patch, 'is_active')) {

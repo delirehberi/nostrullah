@@ -38,6 +38,17 @@ export const PERSONALITY_VALUES = [
 
 export type Personality = (typeof PERSONALITY_VALUES)[number];
 
+export const POST_FORMAT_VALUES = [
+    'news_commentary',
+    'question',
+    'tip',
+    'hot_take',
+    'short_list',
+] as const;
+
+export type PostFormat = (typeof POST_FORMAT_VALUES)[number];
+export type PostFormatWeights = Partial<Record<PostFormat, number>>;
+
 export const FREQUENCY_VALUES = ['every_2_hours', 'daily', 'hourly', 'twice_a_day'] as const;
 
 export type FrequencyPreset = (typeof FREQUENCY_VALUES)[number];
@@ -81,6 +92,11 @@ export type ControlAction =
     | {
           type: 'set_jitter';
           jitter_minutes: number;
+      }
+    | {
+          type: 'set_post_formats';
+          /** `default` resets to the default weights; `off` disables rotation. */
+          post_formats: PostFormatWeights | 'default' | 'off';
       }
     | {
           type: 'set_relays';
@@ -130,6 +146,8 @@ export interface NostrAccount {
     active_hours?: string;
     /** Maximum random delay in minutes added after each scheduled slot. */
     jitter_minutes?: number;
+    /** Post format weights; unset = defaults, empty object = rotation off. */
+    post_formats?: PostFormatWeights;
     control_enabled?: boolean;
     control_admin_pubkeys?: string[];
     control_last_checked_at?: number;

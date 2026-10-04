@@ -5,11 +5,14 @@ import {
     Frequency,
     NostrAccount,
     PERSONALITY_VALUES,
+    POST_FORMAT_VALUES,
     Personality,
+    PostFormatWeights,
     RemoveResourceMatch,
     Resource,
 } from './types';
 import { MAX_JITTER_MINUTES, SchedulerService } from './scheduler';
+import { DEFAULT_POST_FORMAT_WEIGHTS, formatPostFormats } from './post-formats';
 
 export interface AccountConfigPatch {
     name?: string;
@@ -19,6 +22,8 @@ export interface AccountConfigPatch {
     timezone?: string;
     active_hours?: string | null;
     jitter_minutes?: number;
+    /** `null` resets to the default weights. */
+    post_formats?: PostFormatWeights | null;
     data_resources?: Resource[];
     prompt_template?: string;
     personality?: Personality;
@@ -223,6 +228,25 @@ const baseControlActionSchema = z.discriminatedUnion('type', [
         .strict(),
     z
         .object({
+            type: z.literal('set_post_formats'),
+            post_formats: z.union([
+                z.enum(['default', 'off']),
+                z
+                    .array(z.enum(POST_FORMAT_VALUES))
+                    .min(1)
+                    .transform((formats) =>
+                        Object.fromEntries(formats.map((format) => [format, 1]))
+                    ),
+                z
+                    .partialRecord(z.enum(POST_FORMAT_VALUES), z.number().min(0).max(10))
+                    .refine((weights) => Object.values(weights).some((w) => (w || 0) > 0), {
+                        message: 'At least one format needs a weight above 0',
+                    }),
+            ]),
+        })
+        .strict(),
+    z
+        .object({
             type: z.literal('set_relays'),
             relays: z.array(relayUrlSchema).min(1),
         })
@@ -318,6 +342,7 @@ export function formatAccountDetails(account: NostrAccount, now: Date = new Date
         `Active hours: ${account.active_hours || 'all day'}`,
         `Random delay: up to ${account.jitter_minutes || 0} min`,
         `Next post: ${formatNextRun(account, now)}`,
+        `Post formats: ${formatPostFormats(account.post_formats, account.prompt_template)}`,
         `Personality: ${account.personality || 'unspecified'}`,
         `Categories: ${categories}`,
         `Relays: ${relays}`,
@@ -341,6 +366,7 @@ export function formatSupportedCommands(): string {
         '• set categories <cat1, cat2, ...> - Update topic categories',
         '• set name <name> - Update bot display name',
         '• set relays <relay1, relay2, ...> - Update target Nostr relays',
+        `• set post formats <list | format=weight ... | default | off> - Rotate post formats (${POST_FORMAT_VALUES.join(', ')})`,
         '• set prompt <template> - Update prompt template',
         '• add resource <rss/scraping url | quote categories> [weight] - Add content source',
         '• remove resource <url | categories> - Remove content source',
@@ -412,6 +438,20 @@ export function applyControlActions(
             case 'set_jitter':
                 updatedAccount.jitter_minutes = action.jitter_minutes;
                 summary.push(`set random delay to up to ${action.jitter_minutes} min`);
+                break;
+            case 'set_post_formats':
+                if (action.post_formats === 'default') {
+                    updatedAccount.post_formats = undefined;
+                    summary.push('reset post formats to the defaults');
+                } else if (action.post_formats === 'off') {
+                    updatedAccount.post_formats = {};
+                    summary.push('turned post format rotation off');
+                } else {
+                    updatedAccount.post_formats = { ...action.post_formats };
+                    summary.push(
+                        `set post formats to ${formatPostFormats(updatedAccount.post_formats)}`
+                    );
+                }
                 break;
             case 'set_relays':
                 updatedAccount.relays = uniqueStrings(action.relays);
@@ -487,6 +527,7 @@ export function buildControlSchemaPrompt(): string {
         '• set_timezone: {"type":"set_timezone","timezone":"<IANA timezone, e.g. Europe/Istanbul>"}.',
         '• set_active_hours: {"type":"set_active_hours","active_hours":"HH:MM-HH:MM"}. Use null to remove the window and post all day.',
         '• set_jitter: {"type":"set_jitter","jitter_minutes":<integer 0-60>}. Random delay added to each scheduled post.',
+        `• set_post_formats: {"type":"set_post_formats","post_formats":["<format>",...]} for equal weights, {"type":"set_post_formats","post_formats":{"<format>":<weight 0-10>}} for weights, or "default" / "off". Formats: ${POST_FORMAT_VALUES.join(', ')}. Default weights: ${JSON.stringify(DEFAULT_POST_FORMAT_WEIGHTS)}.`,
         '• set_relays: {"type":"set_relays","relays":["<ws/wss url>"]}.',
         '• add_resource: {"type":"add_resource","resource":{"type":"rss"|"scraping","url":"<http/https url>","weight":<optional number>}} or {"type":"add_resource","resource":{"type":"quote","categories":["<cat1>"],"weight":<optional number>}}.',
         '• remove_resource: {"type":"remove_resource","match":{"type":"rss"|"scraping","url":"<url>"}} or {"type":"remove_resource","match":{"type":"quote","categories":["<cat1>"]}}.',
@@ -571,6 +612,10 @@ function buildPatch(original: NostrAccount, updated: NostrAccount): AccountConfi
 
     if (original.jitter_minutes !== updated.jitter_minutes) {
         patch.jitter_minutes = updated.jitter_minutes;
+    }
+
+    if (JSON.stringify(original.post_formats) !== JSON.stringify(updated.post_formats)) {
+        patch.post_formats = updated.post_formats || null;
     }
 
     if (original.prompt_template !== updated.prompt_template) {

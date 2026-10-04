@@ -39,7 +39,8 @@ describe('generateValidatedPost', () => {
             '',
             undefined,
             undefined,
-            expect.stringContaining('https://bad.example/test')
+            expect.stringContaining('https://bad.example/test'),
+            undefined
         );
     });
 
@@ -115,7 +116,8 @@ describe('generateValidatedPost', () => {
             '',
             undefined,
             undefined,
-            expect.stringContaining('Same market update and takeaway as a recent post.')
+            expect.stringContaining('Same market update and takeaway as a recent post.'),
+            undefined
         );
         expect(similarityChecker.checkSimilarity).toHaveBeenNthCalledWith(
             1,
@@ -327,7 +329,8 @@ describe('detectPromptLeakage & generateValidatedPost prompt protection', () => 
             undefined,
             expect.stringContaining(
                 'CRITICAL: Your previous draft repeated or leaked the prompt template'
-            )
+            ),
+            undefined
         );
     });
 

@@ -367,3 +367,52 @@ describe('schedule control actions', () => {
         expect(result.summary[0]).toMatch(/Next post: .+ \(Europe\/Istanbul\)/);
     });
 });
+
+describe('set_post_formats control action', () => {
+    it('accepts a list, weights, default and off', () => {
+        expect(
+            validateInterpreterResponse(
+                JSON.stringify({
+                    actions: [
+                        { type: 'set_post_formats', post_formats: ['question', 'tip'] },
+                        { type: 'set_post_formats', post_formats: { tip: 3, hot_take: 1 } },
+                        { type: 'set_post_formats', post_formats: 'default' },
+                        { type: 'set_post_formats', post_formats: 'off' },
+                    ],
+                })
+            )
+        ).toEqual([
+            { type: 'set_post_formats', post_formats: { question: 1, tip: 1 } },
+            { type: 'set_post_formats', post_formats: { tip: 3, hot_take: 1 } },
+            { type: 'set_post_formats', post_formats: 'default' },
+            { type: 'set_post_formats', post_formats: 'off' },
+        ]);
+    });
+
+    it('rejects unknown formats and all-zero weights', () => {
+        for (const post_formats of [['poem'], { tip: 0 }, { poem: 2 }]) {
+            expect(() =>
+                validateInterpreterResponse(
+                    JSON.stringify({ actions: [{ type: 'set_post_formats', post_formats }] })
+                )
+            ).toThrow();
+        }
+    });
+
+    it('builds patches for weights, off and default', () => {
+        expect(
+            applyControlActions(baseAccount, [
+                { type: 'set_post_formats', post_formats: { tip: 2 } },
+            ]).patch
+        ).toEqual({ post_formats: { tip: 2 } });
+        expect(
+            applyControlActions(baseAccount, [{ type: 'set_post_formats', post_formats: 'off' }])
+                .patch
+        ).toEqual({ post_formats: {} });
+        expect(
+            applyControlActions({ ...baseAccount, post_formats: { tip: 2 } }, [
+                { type: 'set_post_formats', post_formats: 'default' },
+            ]).patch
+        ).toEqual({ post_formats: null });
+    });
+});
