@@ -300,20 +300,20 @@ describe('schedule control actions', () => {
         ...baseAccount,
         timezone: 'Europe/Istanbul',
         active_hours: '07:00-23:00',
-        jitter_minutes: 15,
+        jitter_hours: 1,
     };
 
     it('updates timezone, active hours and jitter', () => {
         const result = applyControlActions(scheduledAccount, [
             { type: 'set_timezone', timezone: 'Europe/Berlin' },
             { type: 'set_active_hours', active_hours: '08:30-22:00' },
-            { type: 'set_jitter', jitter_minutes: 5 },
+            { type: 'set_jitter', jitter_hours: 5 },
         ]);
 
         expect(result.patch).toEqual({
             timezone: 'Europe/Berlin',
             active_hours: '08:30-22:00',
-            jitter_minutes: 5,
+            jitter_hours: 5,
         });
     });
 
@@ -334,20 +334,20 @@ describe('schedule control actions', () => {
                     actions: [
                         { type: 'set_timezone', timezone: 'Europe/Istanbul' },
                         { type: 'set_active_hours', active_hours: '22:00-02:00' },
-                        { type: 'set_jitter', jitter_minutes: '10' },
+                        { type: 'set_jitter', jitter_hours: '3' },
                     ],
                 })
             )
         ).toEqual([
             { type: 'set_timezone', timezone: 'Europe/Istanbul' },
             { type: 'set_active_hours', active_hours: '22:00-02:00' },
-            { type: 'set_jitter', jitter_minutes: 10 },
+            { type: 'set_jitter', jitter_hours: 3 },
         ]);
 
         for (const action of [
             { type: 'set_timezone', timezone: 'Mars/Base' },
             { type: 'set_active_hours', active_hours: '7-23' },
-            { type: 'set_jitter', jitter_minutes: 90 },
+            { type: 'set_jitter', jitter_hours: 7 },
         ]) {
             expect(() =>
                 validateInterpreterResponse(JSON.stringify({ actions: [action] }))
@@ -357,13 +357,13 @@ describe('schedule control actions', () => {
 
     it('shows schedule settings and the next post time in show_details', () => {
         const result = applyControlActions(
-            { ...scheduledAccount, jitter_minutes: 0, last_run_at: 1789549200 },
+            { ...scheduledAccount, jitter_hours: 0, last_run_at: 1789549200 },
             [{ type: 'show_details' }]
         );
 
         expect(result.summary[0]).toContain('Timezone: Europe/Istanbul');
         expect(result.summary[0]).toContain('Active hours: 07:00-23:00');
-        expect(result.summary[0]).toContain('Random delay: up to 0 min');
+        expect(result.summary[0]).toContain('Random delay: up to 0 h');
         expect(result.summary[0]).toMatch(/Next post: .+ \(Europe\/Istanbul\)/);
     });
 });

@@ -19,6 +19,8 @@ const OWN_PRIVATE_KEY = '1'.repeat(64);
 const OWN_PUBKEY = NostrService.getPublicKeyFromPrivate(OWN_PRIVATE_KEY);
 const POST_A = 'a'.repeat(64);
 const POST_B = 'b'.repeat(64);
+// Lease written before collecting: makes the next check due 50 minutes later.
+const RETRY_LEASE = 1_790_000_000 - 6 * 3600 + 50 * 60;
 
 let nextId = 0;
 function event(kind: number, tags: string[][], content = '', pubkey = 'f'.repeat(64)): Event {
@@ -193,7 +195,11 @@ describe('EngagementService.refreshAccount', () => {
 
         await new EngagementService(store, queryEvents).refreshAccount(account, now);
 
-        expect(store.updateEngagementCheckedAt).toHaveBeenCalledWith(9, 1_790_000_000);
+        // First a short retry lease (next check in 50 min), then the full interval
+        expect(store.updateEngagementCheckedAt.mock.calls).toEqual([
+            [9, RETRY_LEASE],
+            [9, 1_790_000_000],
+        ]);
         expect(store.getPostsForEngagement).toHaveBeenCalledWith(9, 1_790_000_000 - 7 * 86400, 50);
         expect(queryEvents).toHaveBeenCalledTimes(1);
         expect(queryEvents.mock.calls[0][0]).toEqual(
@@ -244,8 +250,40 @@ describe('EngagementService.refreshAccount', () => {
 
         await new EngagementService(store, queryEvents).refreshAccount(account, now);
 
-        expect(store.updateEngagementCheckedAt).toHaveBeenCalled();
+        expect(store.updateEngagementCheckedAt).toHaveBeenLastCalledWith(9, 1_790_000_000);
         expect(queryEvents).not.toHaveBeenCalled();
+    });
+
+    it('retries on the next hourly run when the relay query fails', async () => {
+        const store = createStore();
+        const queryEvents = vi.fn().mockRejectedValue(new Error('relay timeout'));
+        const service = new EngagementService(store, queryEvents);
+
+        await expect(service.refreshAccount(account, now)).rejects.toThrow('relay timeout');
+
+        // Only the short lease was written; nothing saved
+        expect(store.updateEngagementCheckedAt.mock.calls).toEqual([[9, RETRY_LEASE]]);
+        expect(store.saveEngagement).not.toHaveBeenCalled();
+
+        // 45 minutes later: still within the lease; 60 minutes later (next run): retried
+        const leased = { ...account, engagement_checked_at: RETRY_LEASE };
+        await service.refreshAccount(leased, new Date((1_790_000_000 + 45 * 60) * 1000));
+        expect(queryEvents).toHaveBeenCalledTimes(1);
+        await expect(
+            service.refreshAccount(leased, new Date((1_790_000_000 + 60 * 60) * 1000))
+        ).rejects.toThrow('relay timeout');
+        expect(queryEvents).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries on the next run when saving the counts fails', async () => {
+        const store = createStore();
+        store.saveEngagement.mockRejectedValue(new Error('D1 unavailable'));
+        const queryEvents = vi.fn().mockResolvedValue([event(7, [['e', POST_A]], '+')]);
+
+        await expect(
+            new EngagementService(store, queryEvents).refreshAccount(account, now)
+        ).rejects.toThrow('D1 unavailable');
+        expect(store.updateEngagementCheckedAt.mock.calls).toEqual([[9, RETRY_LEASE]]);
     });
 });
 

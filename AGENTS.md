@@ -17,7 +17,7 @@ This process ensures that your work aligns with the user's expectations.
 This project is a headless Nostr bot running on Cloudflare Workers.
 
 - The worker entrypoint is `src/index.ts`.
-- Scheduled execution is driven by a Cloudflare cron trigger.
+- Scheduled execution is driven by a Cloudflare cron trigger that runs hourly (`7 * * * *` in `wrangler.toml`; see `wrangler.toml.dist`).
 - Account configuration is loaded from a D1 database, not from in-code arrays.
 - Content is generated with Cloudflare AI in `src/ai.ts`.
 - Posts are signed and published to Nostr relays in `src/nostr.ts`.
@@ -28,8 +28,8 @@ This project is a headless Nostr bot running on Cloudflare Workers.
 
 1. The cron trigger invokes `scheduled()` in `src/index.ts`.
 2. `getAccounts()` in `src/config.ts` loads all active accounts from the `accounts` table.
-3. Each account is processed in `ctx.waitUntil(...)`. In a separate `waitUntil`, `EngagementService` (`src/engagement.ts`) collects reactions, reposts, replies and zaps for the account's posts of the last 7 days, at most every 6 hours (one relay query per account), and stores per-post counts and scores.
-4. The worker checks whether the account should run now using `StorageService.shouldRun()` (`src/scheduler.ts`): the frequency is evaluated in the account's `timezone`, nothing is posted outside `active_hours` (a slot missed overnight posts once when the window opens), and each slot is delayed by a stable random 0..`jitter_minutes` offset.
+3. Each account is processed in `ctx.waitUntil(...)`. In a separate `waitUntil`, `EngagementService` (`src/engagement.ts`) collects reactions, reposts, replies and zaps for the account's posts of the last 7 days, at most every 6 hours (one relay query per account), and stores per-post counts and scores. A failed collection is retried on the next hourly run.
+4. The worker checks whether the account should run now using `StorageService.shouldRun()` (`src/scheduler.ts`): the frequency is evaluated in the account's `timezone`, nothing is posted outside `active_hours` (slots missed overnight produce one post when the window opens), and each slot is delayed by a stable random 0..`jitter_hours` whole-hour offset. Due-ness is based on the first slot after `last_run_at`, so later slots' delays never postpone a pending post.
 5. The worker loads recent post history from `post_history`.
 6. The worker optionally fetches external resource context. Resources are tried in weighted-random order (up to 3) until one returns usable content; RSS items already listed in `shared_items` are skipped. If none succeed, the post is generated without resource context.
 7. A post format is picked by weight (`src/post-formats.ts`), avoiding the previous post's format, for accounts without a custom `prompt_template` or whose template contains `$$FORMAT$$`; accounts on the default weights get them scaled (0.5-2x) by each format's measured engagement. The 3 best-scoring posts of the last 30 days are added to the prompt (same template rule, via `$$TOP_POSTS$$`). `ContentGenerator` builds the prompt and calls Cloudflare AI.
@@ -142,7 +142,7 @@ The worker currently depends on these D1 tables:
 - `personality`
 - `timezone` (IANA name, default `Europe/Istanbul`)
 - `active_hours` (`HH:MM-HH:MM` in `timezone`, default `07:00-23:00`; `NULL` = all day)
-- `jitter_minutes` (0-60, default `15`)
+- `jitter_hours` (0-6 whole hours of random delay, default `1`)
 - `post_formats` as JSON text (format → weight; `NULL` = defaults, `{}` = rotation off)
 - `max_post_length` (100-2000 characters, links not counted; `NULL` = `MAX_POST_LENGTH` env var or 500)
 - `engagement_checked_at` (unix seconds of the last engagement collection)

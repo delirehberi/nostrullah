@@ -12,26 +12,30 @@ export const PRESET_FREQUENCIES: Record<string, string> = {
 
 export const DEFAULT_TIMEZONE = 'Europe/Istanbul';
 export const DEFAULT_ACTIVE_HOURS = '07:00-23:00';
-export const DEFAULT_JITTER_MINUTES = 15;
-export const MAX_JITTER_MINUTES = 60;
+export const DEFAULT_JITTER_HOURS = 1;
+export const MAX_JITTER_HOURS = 6;
 
 // 30 seconds buffer to absorb trigger seconds clock skew
 const CLOCK_SKEW_TOLERANCE_MS = 30 * 1000;
 const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
 const MINUTES_PER_DAY = 24 * 60;
 const ACTIVE_HOURS_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$/;
 
 /**
  * Per-account schedule settings. A plain frequency string is treated as
- * `{ frequency, timezone: 'UTC' }` with no active hours and no jitter.
+ * `{ frequency, timezone: 'UTC' }` with no active hours and no random delay.
  */
 export interface ScheduleSettings {
     frequency: string;
     timezone?: string;
     /** `HH:MM-HH:MM` in the account's timezone; may cross midnight. Unset = all day. */
     activeHours?: string;
-    /** Maximum random delay (minutes) added after each scheduled slot. */
-    jitterMinutes?: number;
+    /**
+     * Maximum random delay in whole hours added after each scheduled slot. Whole
+     * hours because the worker's cron runs hourly.
+     */
+    jitterHours?: number;
     /** Stable per-account value (e.g. account id) used to derive the jitter. */
     seed?: number | string;
 }
@@ -45,7 +49,7 @@ interface ResolvedSchedule {
     cronExpr: string;
     timezone: string;
     window?: ActiveWindow;
-    jitterMs: number;
+    jitterHours: number;
     seed: string;
 }
 
@@ -125,7 +129,7 @@ export class SchedulerService {
             frequency: account.frequency,
             timezone: account.timezone,
             activeHours: account.active_hours,
-            jitterMinutes: account.jitter_minutes,
+            jitterHours: account.jitter_hours,
             seed: account.id,
         };
     }
@@ -147,10 +151,12 @@ export class SchedulerService {
     /**
      * Determines whether an account is due to run at the given execution time.
      *
-     * An account is due when it has not run since the latest cron slot, the current
-     * time is inside its active hours, and the slot's deterministic jitter delay has
-     * elapsed. A slot that falls outside the active hours is deferred to the next
-     * window opening, so it is posted once when the window opens.
+     * The account is due when the first cron slot after its last run has passed, its
+     * deterministic random delay has elapsed, and the current time is inside its
+     * active hours. A slot outside the active hours is deferred to the next window
+     * opening, so slots missed overnight produce one post when the window opens.
+     * Using the first pending slot (not the latest) means later slots' delays can
+     * never keep postponing a post.
      */
     static isDue(
         lastRun: number | null | undefined,
@@ -170,11 +176,9 @@ export class SchedulerService {
         const lastRunMs = normalizedLastRun * 1000;
 
         try {
-            const prevSlot = getPreviousSlot(resolved, now);
-            if (lastRunMs >= prevSlot) {
-                return false;
-            }
-            return now.getTime() + CLOCK_SKEW_TOLERANCE_MS >= getDueTime(prevSlot, resolved);
+            const pendingSlot = getFirstSlotAfter(resolved, lastRunMs);
+            const reference = now.getTime() + CLOCK_SKEW_TOLERANCE_MS;
+            return pendingSlot <= reference && reference >= getDueTime(pendingSlot, resolved);
         } catch (error) {
             console.error(`Error calculating schedule due state for ${resolved.cronExpr}:`, error);
             // Fallback safe check: 1 hour has elapsed
@@ -198,21 +202,13 @@ export class SchedulerService {
             }
 
             const lastRunMs = this.normalizeLastRunTimestamp(lastRun) * 1000;
-            const prevSlot = getPreviousSlot(resolved, now);
-            // A slot that is still pending (not yet run) becomes due at its due time,
-            // or at the next window opening when that falls outside the active hours.
-            const slot =
-                lastRunMs === 0 || lastRunMs < prevSlot
-                    ? prevSlot
-                    : CronExpressionParser.parse(resolved.cronExpr, {
-                          currentDate: now,
-                          tz: resolved.timezone,
-                      })
-                          .next()
-                          .toDate()
-                          .getTime();
+            if (lastRunMs === 0) {
+                // Never ran: due as soon as the active window opens.
+                return getNextWindowStart(now.getTime(), resolved);
+            }
 
-            const dueTime = Math.max(getDueTime(slot, resolved), now.getTime());
+            const pendingSlot = getFirstSlotAfter(resolved, lastRunMs);
+            const dueTime = Math.max(getDueTime(pendingSlot, resolved), now.getTime());
             return isWithinWindow(new Date(dueTime), resolved)
                 ? dueTime
                 : getNextWindowStart(dueTime, resolved);
@@ -235,16 +231,16 @@ function resolveSchedule(schedule: string | ScheduleSettings): ResolvedSchedule 
         console.warn(`Invalid timezone "${settings.timezone}". Falling back to UTC.`);
     }
 
-    const jitterMinutes = Math.min(
-        Math.max(Math.floor(settings.jitterMinutes || 0), 0),
-        MAX_JITTER_MINUTES
+    const jitterHours = Math.min(
+        Math.max(Math.floor(settings.jitterHours || 0), 0),
+        MAX_JITTER_HOURS
     );
 
     return {
         cronExpr: SchedulerService.toCronExpression(settings.frequency),
         timezone,
         window: settings.activeHours ? parseActiveHours(settings.activeHours) : undefined,
-        jitterMs: jitterMinutes * MINUTE_MS,
+        jitterHours,
         seed: String(settings.seed ?? ''),
     };
 }
@@ -260,12 +256,15 @@ function parseActiveHours(value: string): ActiveWindow | undefined {
     };
 }
 
-function getPreviousSlot(resolved: ResolvedSchedule, now: Date): number {
+/**
+ * First cron slot strictly after `afterMs`: the slot the account still owes a post for.
+ */
+function getFirstSlotAfter(resolved: ResolvedSchedule, afterMs: number): number {
     const interval = CronExpressionParser.parse(resolved.cronExpr, {
-        currentDate: new Date(now.getTime() + CLOCK_SKEW_TOLERANCE_MS),
+        currentDate: new Date(afterMs),
         tz: resolved.timezone,
     });
-    return interval.prev().toDate().getTime();
+    return interval.next().toDate().getTime();
 }
 
 /**
@@ -280,7 +279,7 @@ function getDueTime(slot: number, resolved: ResolvedSchedule): number {
 }
 
 function getJitterOffset(slot: number, resolved: ResolvedSchedule): number {
-    if (resolved.jitterMs === 0) {
+    if (resolved.jitterHours === 0) {
         return 0;
     }
     // FNV-1a hash of seed + slot: stable across cron ticks, different per slot/account.
@@ -289,7 +288,7 @@ function getJitterOffset(slot: number, resolved: ResolvedSchedule): number {
         hash ^= char.charCodeAt(0);
         hash = Math.imul(hash, 0x01000193);
     }
-    return (hash >>> 0) % (resolved.jitterMs + 1);
+    return ((hash >>> 0) % (resolved.jitterHours + 1)) * HOUR_MS;
 }
 
 function getLocalMinutes(date: Date, timezone: string): number {

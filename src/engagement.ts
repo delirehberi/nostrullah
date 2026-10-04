@@ -5,6 +5,8 @@ import { DEFAULT_POST_FORMAT_WEIGHTS } from './post-formats';
 import { NostrAccount, POST_FORMAT_VALUES, PostFormat, PostFormatWeights } from './types';
 
 export const ENGAGEMENT_CHECK_INTERVAL_SECONDS = 6 * 60 * 60;
+/** After a failed collection, retry on the next hourly cron run (not after 6 hours). */
+export const ENGAGEMENT_RETRY_AFTER_SECONDS = 50 * 60;
 export const ENGAGEMENT_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
 export const ENGAGEMENT_MAX_POSTS = 50;
 export const TOP_POSTS_LOOKBACK_SECONDS = 30 * 24 * 60 * 60;
@@ -268,8 +270,13 @@ export class EngagementService {
             return;
         }
 
-        // Mark the check first so failing relays are not retried on every cron tick.
-        await this.storage.updateEngagementCheckedAt(account.id, nowSeconds);
+        // Claim a short retry slot first: if anything below fails, the account is
+        // retried on the next cron run instead of after the full 6-hour interval.
+        // This write also fails fast (before any relay query) when the column is missing.
+        await this.storage.updateEngagementCheckedAt(
+            account.id,
+            nowSeconds - ENGAGEMENT_CHECK_INTERVAL_SECONDS + ENGAGEMENT_RETRY_AFTER_SECONDS
+        );
 
         const posts = await this.storage.getPostsForEngagement(
             account.id,
@@ -277,6 +284,7 @@ export class EngagementService {
             ENGAGEMENT_MAX_POSTS
         );
         if (posts.length === 0) {
+            await this.storage.updateEngagementCheckedAt(account.id, nowSeconds);
             return;
         }
 
@@ -302,6 +310,9 @@ export class EngagementService {
                 nowSeconds
             );
         }
+
+        // Only a fully successful collection starts the 6-hour interval.
+        await this.storage.updateEngagementCheckedAt(account.id, nowSeconds);
 
         console.log(
             `Collected engagement for ${posts.length} posts of account ${account.id} ` +

@@ -431,9 +431,9 @@ export class StorageService implements EngagementStore {
             values.push(patch.active_hours || null);
         }
 
-        if (patch.jitter_minutes !== undefined) {
-            assignments.push('jitter_minutes = ?');
-            values.push(patch.jitter_minutes);
+        if (patch.jitter_hours !== undefined) {
+            assignments.push('jitter_hours = ?');
+            values.push(patch.jitter_hours);
         }
 
         if (Object.prototype.hasOwnProperty.call(patch, 'max_post_length')) {

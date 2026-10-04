@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Env, NostrAccount, POST_FORMAT_VALUES, PostFormatWeights } from './types';
 import { resourceSchema } from './control-actions';
-import { DEFAULT_ACTIVE_HOURS, DEFAULT_JITTER_MINUTES, DEFAULT_TIMEZONE } from './scheduler';
+import { DEFAULT_ACTIVE_HOURS, DEFAULT_JITTER_HOURS, DEFAULT_TIMEZONE } from './scheduler';
 
 interface GetAccountsOptions {
     includeInactive?: boolean;
@@ -59,7 +59,7 @@ export const getAccounts = async (
                 row.active_hours === undefined
                     ? DEFAULT_ACTIVE_HOURS
                     : row.active_hours || undefined,
-            jitter_minutes: row.jitter_minutes ?? DEFAULT_JITTER_MINUTES,
+            jitter_hours: row.jitter_hours ?? DEFAULT_JITTER_HOURS,
             max_post_length: row.max_post_length ?? undefined,
             engagement_checked_at: row.engagement_checked_at || 0,
             post_formats: safeParseJson<PostFormatWeights | undefined>(

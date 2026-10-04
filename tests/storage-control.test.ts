@@ -40,13 +40,13 @@ describe('StorageService control-plane helpers', () => {
         await storage.updateAccountConfiguration(7, {
             timezone: 'Europe/Berlin',
             active_hours: null,
-            jitter_minutes: 0,
+            jitter_hours: 0,
             max_post_length: null,
         });
 
         expect(statements[0].sql).toContain('timezone = ?');
         expect(statements[0].sql).toContain('active_hours = ?');
-        expect(statements[0].sql).toContain('jitter_minutes = ?');
+        expect(statements[0].sql).toContain('jitter_hours = ?');
         expect(statements[0].sql).toContain('max_post_length = ?');
         expect(statements[0].values).toEqual(['Europe/Berlin', null, 0, null, 7]);
     });

@@ -13,7 +13,7 @@ binding = "BOT_STATE"
 id = "KVNAMESPACEID"
 
 [triggers]
-crons = ["*/4 * * * *"]
+crons = ["7 * * * *"]
 
 [vars]
 NOSTR_ACCOUNTS='''

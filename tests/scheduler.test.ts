@@ -244,21 +244,23 @@ describe('SchedulerService account schedule settings', () => {
         );
     });
 
-    it('delays each slot by a stable jitter within the configured bound', () => {
+    it('delays each slot by a stable whole-hour offset within the configured bound', () => {
         const lastRun = seconds('2026-09-15T06:30:00Z');
         const slot = new Date('2026-09-16T06:00:00Z').getTime();
+        const offsets = new Set<number>();
 
         for (let seed = 1; seed <= 25; seed++) {
-            const schedule = istanbul({ jitterMinutes: 15, seed });
+            const schedule = istanbul({ jitterHours: 2, seed });
             const dueAt = SchedulerService.getNextRunTimestamp(
                 lastRun,
                 schedule,
                 new Date('2026-09-16T05:00:00Z')
             );
 
-            expect(dueAt).toBeGreaterThanOrEqual(slot);
-            expect(dueAt).toBeLessThanOrEqual(slot + 15 * 60 * 1000);
-            // Stable across cron ticks
+            // 0, 1 or 2 whole hours after the 09:00 Istanbul slot
+            expect([0, 1, 2].map((h) => slot + h * 3600_000)).toContain(dueAt);
+            offsets.add(dueAt - slot);
+            // Stable across cron runs
             expect(
                 SchedulerService.getNextRunTimestamp(
                     lastRun,
@@ -268,6 +270,21 @@ describe('SchedulerService account schedule settings', () => {
             ).toBe(dueAt);
             expect(SchedulerService.isDue(lastRun, schedule, new Date(dueAt - 60_000))).toBe(false);
             expect(SchedulerService.isDue(lastRun, schedule, new Date(dueAt))).toBe(true);
+        }
+
+        // Different accounts get different delays
+        expect(offsets.size).toBeGreaterThan(1);
+    });
+
+    it('caps the random delay at 6 hours', () => {
+        const lastRun = seconds('2026-09-15T06:30:00Z');
+        for (let seed = 1; seed <= 25; seed++) {
+            const dueAt = SchedulerService.getNextRunTimestamp(
+                lastRun,
+                istanbul({ jitterHours: 50, seed }),
+                new Date('2026-09-16T05:00:00Z')
+            );
+            expect(dueAt).toBeLessThanOrEqual(new Date('2026-09-16T12:00:00Z').getTime());
         }
     });
 
@@ -309,5 +326,90 @@ describe('SchedulerService validators', () => {
         expect(SchedulerService.isValidActiveHours('22:30-02:00')).toBe(true);
         expect(SchedulerService.isValidActiveHours('7-23')).toBe(false);
         expect(SchedulerService.isValidActiveHours('24:00-02:00')).toBe(false);
+    });
+});
+
+describe('SchedulerService with an hourly worker cron (runs at :07)', () => {
+    const HOUR = 3600_000;
+
+    /** Simulates hourly cron runs and returns the local Istanbul times of each post. */
+    function simulate(
+        schedule: ScheduleSettings,
+        lastRunIso: string,
+        fromIso: string,
+        toIso: string
+    ): string[] {
+        let lastRun = Math.floor(new Date(lastRunIso).getTime() / 1000);
+        const posts: string[] = [];
+        for (let t = new Date(fromIso).getTime(); t <= new Date(toIso).getTime(); t += HOUR) {
+            if (SchedulerService.isDue(lastRun, schedule, new Date(t))) {
+                posts.push(new Date(t + 3 * HOUR).toISOString().slice(11, 16));
+                lastRun = Math.floor(t / 1000);
+            }
+        }
+        return posts;
+    }
+
+    it('posts once when the window opens for slots missed overnight', () => {
+        // hourly, window 07:00-23:00, no delay; last post 22:07 local
+        const posts = simulate(
+            {
+                frequency: 'hourly',
+                timezone: 'Europe/Istanbul',
+                activeHours: '07:00-23:00',
+                seed: 1,
+            },
+            '2026-09-15T19:07:00Z',
+            '2026-09-15T20:07:00Z',
+            '2026-09-16T06:07:00Z'
+        );
+
+        // 23:07 is outside the window (ends 23:00); nothing overnight; one post at 07:07
+        expect(posts).toEqual(['07:07', '08:07', '09:07']);
+    });
+
+    it('posts a daily slot exactly once, at most N hours late', () => {
+        for (let seed = 1; seed <= 20; seed++) {
+            const posts = simulate(
+                {
+                    frequency: 'daily',
+                    timezone: 'Europe/Istanbul',
+                    activeHours: '07:00-23:00',
+                    jitterHours: 2,
+                    seed,
+                },
+                '2026-09-15T06:07:00Z',
+                '2026-09-15T07:07:00Z',
+                '2026-09-16T20:07:00Z'
+            );
+
+            expect(posts).toHaveLength(1);
+            expect(['09:07', '10:07', '11:07']).toContain(posts[0]);
+        }
+    });
+
+    it('never lets later slots postpone a pending post (hourly frequency with delay)', () => {
+        for (let seed = 1; seed <= 20; seed++) {
+            const posts = simulate(
+                {
+                    frequency: 'hourly',
+                    timezone: 'Europe/Istanbul',
+                    activeHours: '07:00-23:00',
+                    jitterHours: 3,
+                    seed,
+                },
+                '2026-09-16T04:07:00Z',
+                '2026-09-16T05:07:00Z',
+                '2026-09-16T19:07:00Z'
+            );
+
+            // Each post is owed for the first slot after the previous one, so the gap
+            // between posts is at most 1h (next slot) + 3h (max delay).
+            const hours = posts.map((time) => Number(time.slice(0, 2)));
+            expect(hours.length).toBeGreaterThan(3);
+            for (let i = 1; i < hours.length; i++) {
+                expect(hours[i] - hours[i - 1]).toBeLessThanOrEqual(4);
+            }
+        }
     });
 });

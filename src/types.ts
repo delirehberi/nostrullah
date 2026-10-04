@@ -91,7 +91,7 @@ export type ControlAction =
       }
     | {
           type: 'set_jitter';
-          jitter_minutes: number;
+          jitter_hours: number;
       }
     | {
           type: 'set_post_formats';
@@ -152,8 +152,8 @@ export interface NostrAccount {
     timezone?: string;
     /** `HH:MM-HH:MM` posting window in `timezone`; unset means all day. */
     active_hours?: string;
-    /** Maximum random delay in minutes added after each scheduled slot. */
-    jitter_minutes?: number;
+    /** Maximum random delay in whole hours added after each scheduled slot. */
+    jitter_hours?: number;
     /** Post format weights; unset = defaults, empty object = rotation off. */
     post_formats?: PostFormatWeights;
     /** Post length limit in characters, links excluded; unset = env var or default. */

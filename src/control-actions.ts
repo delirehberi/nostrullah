@@ -11,7 +11,7 @@ import {
     RemoveResourceMatch,
     Resource,
 } from './types';
-import { MAX_JITTER_MINUTES, SchedulerService } from './scheduler';
+import { MAX_JITTER_HOURS, SchedulerService } from './scheduler';
 import { DEFAULT_POST_FORMAT_WEIGHTS, formatPostFormats } from './post-formats';
 import { EngagementStats, formatEngagementStats } from './engagement';
 import { DEFAULT_MAX_POST_LENGTH, MAX_MAX_POST_LENGTH, MIN_MAX_POST_LENGTH } from './post-length';
@@ -23,7 +23,7 @@ export interface AccountConfigPatch {
     frequency?: string;
     timezone?: string;
     active_hours?: string | null;
-    jitter_minutes?: number;
+    jitter_hours?: number;
     /** `null` resets to the default weights. */
     post_formats?: PostFormatWeights | null;
     /** `null` clears the account value. */
@@ -221,12 +221,12 @@ const baseControlActionSchema = z.discriminatedUnion('type', [
     z
         .object({
             type: z.literal('set_jitter'),
-            jitter_minutes: z.coerce
+            jitter_hours: z.coerce
                 .number()
                 .int()
                 .min(0)
-                .max(MAX_JITTER_MINUTES, {
-                    message: `Must be between 0 and ${MAX_JITTER_MINUTES} minutes`,
+                .max(MAX_JITTER_HOURS, {
+                    message: `Must be between 0 and ${MAX_JITTER_HOURS} hours`,
                 }),
         })
         .strict(),
@@ -364,7 +364,7 @@ export function formatAccountDetails(account: NostrAccount, now: Date = new Date
         `Posting frequency: ${frequency}`,
         `Timezone: ${account.timezone || 'UTC'}`,
         `Active hours: ${account.active_hours || 'all day'}`,
-        `Random delay: up to ${account.jitter_minutes || 0} min`,
+        `Random delay: up to ${account.jitter_hours || 0} h`,
         `Next post: ${formatNextRun(account, now)}`,
         `Post formats: ${formatPostFormats(account.post_formats, account.prompt_template)}`,
         `Max post length: ${account.max_post_length ? `${account.max_post_length} characters` : `default (MAX_POST_LENGTH or ${DEFAULT_MAX_POST_LENGTH})`}, links not counted`,
@@ -387,7 +387,7 @@ export function formatSupportedCommands(): string {
         '• set frequency <hourly|every_2_hours|twice_a_day|daily|cron> - Update posting schedule (daily = 09:00, twice a day = 09:00 & 18:00)',
         '• set timezone <Area/City> - Timezone for the schedule and active hours (e.g. Europe/Istanbul)',
         '• set active hours <HH:MM-HH:MM|off> - Only post inside this window (e.g. 07:00-23:00)',
-        '• set random delay <0-60> - Max minutes of random delay added to each post',
+        `• set random delay <0-${MAX_JITTER_HOURS}> - Max hours of random delay added to each post`,
         '• set active <true|false> - Activate or pause the bot',
         '• set categories <cat1, cat2, ...> - Update topic categories',
         '• set name <name> - Update bot display name',
@@ -473,8 +473,8 @@ export function applyControlActions(
                 );
                 break;
             case 'set_jitter':
-                updatedAccount.jitter_minutes = action.jitter_minutes;
-                summary.push(`set random delay to up to ${action.jitter_minutes} min`);
+                updatedAccount.jitter_hours = action.jitter_hours;
+                summary.push(`set random delay to up to ${action.jitter_hours} h`);
                 break;
             case 'set_post_formats':
                 if (action.post_formats === 'default') {
@@ -572,7 +572,7 @@ export function buildControlSchemaPrompt(): string {
         '• set_frequency: {"type":"set_frequency","frequency":"<preset or cron>"}. Presets: hourly, every_2_hours, twice_a_day, daily. Cron: 5-part cron (e.g. 0 9,21 * * *).',
         '• set_timezone: {"type":"set_timezone","timezone":"<IANA timezone, e.g. Europe/Istanbul>"}.',
         '• set_active_hours: {"type":"set_active_hours","active_hours":"HH:MM-HH:MM"}. Use null to remove the window and post all day.',
-        '• set_jitter: {"type":"set_jitter","jitter_minutes":<integer 0-60>}. Random delay added to each scheduled post.',
+        `• set_jitter: {"type":"set_jitter","jitter_hours":<integer 0-${MAX_JITTER_HOURS}>}. Random delay in whole hours added to each scheduled post.`,
         `• set_post_formats: {"type":"set_post_formats","post_formats":["<format>",...]} for equal weights, {"type":"set_post_formats","post_formats":{"<format>":<weight 0-10>}} for weights, or "default" / "off". Formats: ${POST_FORMAT_VALUES.join(', ')}. Default weights: ${JSON.stringify(DEFAULT_POST_FORMAT_WEIGHTS)}.`,
         `• set_max_length: {"type":"set_max_length","max_post_length":<integer ${MIN_MAX_POST_LENGTH}-${MAX_MAX_POST_LENGTH}>} or {"type":"set_max_length","max_post_length":"default"}. Character limit for posts, links not counted.`,
         '• set_relays: {"type":"set_relays","relays":["<ws/wss url>"]}.',
@@ -657,8 +657,8 @@ function buildPatch(original: NostrAccount, updated: NostrAccount): AccountConfi
         patch.active_hours = updated.active_hours || null;
     }
 
-    if (original.jitter_minutes !== updated.jitter_minutes) {
-        patch.jitter_minutes = updated.jitter_minutes;
+    if (original.jitter_hours !== updated.jitter_hours) {
+        patch.jitter_hours = updated.jitter_hours;
     }
 
     if (original.max_post_length !== updated.max_post_length) {
